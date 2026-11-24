@@ -104,6 +104,14 @@ class LogTest(unittest.TestCase):
             b.add("b", "k")
         self.assertEqual((a.verify(), a.end().seq, len(a.events("b"))), ("", 40, 20))
 
+    def test_two_programs_writing_at_the_same_time(self):
+        self.open()
+        code = WRITER.replace("while True:", "for _ in range(150):")
+        ps = [subprocess.Popen([sys.executable, "-c", code, str(self.path)], stdout=subprocess.DEVNULL) for _ in "ab"]
+        self.assertEqual([p.wait(60) for p in ps], [0, 0])
+        log = self.open()
+        self.assertEqual((log.verify(), log.end().seq), ("", 300))
+
     def test_newer_log_is_refused(self):
         self.open().db.execute("pragma user_version=99")
         with self.assertRaisesRegex(ValueError, "update the program"):
