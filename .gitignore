@@ -1,0 +1,11 @@
+.agents/
+.genesis/
+.env*
+*.pem
+*.key
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+dist/
+.DS_Store
+SPEC.md

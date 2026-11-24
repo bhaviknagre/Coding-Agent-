@@ -1,0 +1,24 @@
+#!/bin/bash
+# The one check: lint, types, secret scan, tests. Also the pre-commit hook.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE # tests make their own repositories, also inside a commit hook
+image=coding-agent-v2/dev:$(git hash-object Dockerfile | cut -c1-12)
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  # Downloaded on the host: Docker Desktop's own network can be very slow.
+  wheels=$(mktemp -d); trap 'rm -rf "$wheels"' EXIT
+  arch=$(docker version --format '{{.Server.Arch}}'); case $arch in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
+  python3 -m pip download -q --disable-pip-version-check --only-binary=:all: --python-version 3.12 \
+    --platform "manylinux_2_17_$arch" --platform "manylinux_2_28_$arch" --platform "manylinux2014_$arch" \
+    -d "$wheels" $(grep -oE '[a-z]+==[0-9.]+' Dockerfile)
+  docker build -q --label coding-agent-v2=dev -t "$image" -f Dockerfile "$wheels" >/dev/null
+fi
+tool() { docker run --rm --label coding-agent-v2=check --network=none --read-only --tmpfs /tmp --cap-drop=ALL \
+  --memory=1g --pids-limit=128 -v "$PWD:/src:ro" -w /src "$image" "$@"; }
+echo "1/4 lint";  tool ruff check --no-cache .
+echo "2/4 types"; tool mypy agent
+echo "3/4 secrets"; python3 -m agent.scan
+echo "4/4 tests"; python3 -m unittest discover -q -s tests -t .
+left=$(docker ps -aq --filter label=coding-agent-v2=check | wc -l | tr -d ' ')
+[ "$left" = 0 ] || { echo "containers left: $left"; exit 1; }
+echo "ALL CHECKS PASSED"
