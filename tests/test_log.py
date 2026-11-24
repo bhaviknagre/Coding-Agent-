@@ -106,11 +106,14 @@ class LogTest(unittest.TestCase):
 
     def test_two_programs_writing_at_the_same_time(self):
         self.open()
-        code = WRITER.replace("while True:", "for _ in range(150):")
-        ps = [subprocess.Popen([sys.executable, "-c", code, str(self.path)], stdout=subprocess.DEVNULL) for _ in "ab"]
+        # A pause between reading the last event and writing the next one forces the overlap every time.
+        slow = "import time, agent.log as L\nd = L.digest\nL.digest = lambda *a: (time.sleep(0.005), d(*a))[1]\n"
+        code = slow + WRITER.replace("while True:", "for _ in range(50):")
+        quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        ps = [subprocess.Popen([sys.executable, "-c", code, str(self.path)], **quiet) for _ in "ab"]
         self.assertEqual([p.wait(60) for p in ps], [0, 0])
         log = self.open()
-        self.assertEqual((log.verify(), log.end().seq), ("", 300))
+        self.assertEqual((log.verify(), log.end().seq), ("", 100))
 
     def test_newer_log_is_refused(self):
         self.open().db.execute("pragma user_version=99")
