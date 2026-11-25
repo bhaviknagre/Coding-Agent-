@@ -5,6 +5,7 @@ a new container without network, and everything made here is labelled, so cleanu
 Containers share the computer's kernel: this limits harm, it is not complete protection.
 """
 import contextlib
+import functools
 import json
 import os
 import posixpath
@@ -55,38 +56,55 @@ class Copied(NamedTuple):
     left_out: list[str]  # "name: reason"
 
 
-def docker(*args: str, timeout: float = 60, ok: bool = True) -> str:
+class _Hold:
+    depth = 0
+    pending = False
+
+
+@contextlib.contextmanager
+def uninterrupted() -> Iterator[None]:
+    """Ctrl+C inside this block takes effect at its end. Without it, an interrupt could leave Docker making something
+    that we no longer know about and never remove. Needs signals_stop_cleanly(); only the main thread gets signals."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    _Hold.depth += 1
     try:
-        p = subprocess.Popen(
-            ["docker", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
-        )
-    except OSError as e:
-        raise BoxError("Docker was not found. Next: run 'agent doctor'.") from e
-    with p:
-        try:
-            out, err = p.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired as e:
-            p.kill()
-            raise BoxError(f"Docker did not answer ({args[0]}). Next: run 'agent doctor'.") from e
-        except BaseException:
-            # Ctrl+C: let this call finish, or Docker could still be making something we no longer know about.
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                p.communicate(timeout=15)
-            p.kill()
-            raise
-    if ok and p.returncode:
-        raise BoxError(f"Docker refused '{args[0]}': {err.strip()[-300:]}")
-    return out.strip()
+        yield
+    finally:
+        _Hold.depth -= 1
+        if _Hold.depth == 0 and _Hold.pending:
+            _Hold.pending = False
+            raise KeyboardInterrupt
 
 
 def signals_stop_cleanly() -> None:
     """Closing the terminal or 'kill' should clean up like Ctrl+C does. Call once, at program start."""
 
     def stop(*_: object) -> None:
-        raise KeyboardInterrupt
+        if _Hold.depth:
+            _Hold.pending = True
+        else:
+            raise KeyboardInterrupt
 
-    for name in (signal.SIGTERM, signal.SIGHUP):
+    # Ctrl+C too: a program started in the background inherits 'ignore Ctrl+C' from the shell.
+    for name in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(name, stop)
+
+
+def docker(*args: str, timeout: float = 60, ok: bool = True) -> str:
+    with uninterrupted():
+        try:
+            p = subprocess.run(
+                ["docker", *args], capture_output=True, text=True, timeout=timeout, start_new_session=True
+            )
+        except subprocess.TimeoutExpired as e:
+            raise BoxError(f"Docker did not answer ({args[0]}). Next: run 'agent doctor'.") from e
+        except OSError as e:
+            raise BoxError("Docker was not found. Next: run 'agent doctor'.") from e
+    if ok and p.returncode:
+        raise BoxError(f"Docker refused '{args[0]}': {p.stderr.strip()[-300:]}")
+    return p.stdout.strip()
 
 
 # ---------------------------------------------------------------- cleanup
@@ -195,11 +213,15 @@ def list_commit(repo: Path, commit: str) -> tuple[list[Entry], list[str]]:
             left_out.append(f"{name}: {reason}")
         else:
             take.append(entry)
-    names = {e.name for e in take}
-    for e in take:
-        if len(names) != len(take) or any(str(p) in names for p in PurePosixPath(e.name).parents):
-            raise BoxError(f"the commit has conflicting paths near '{e.name}'")
+    refuse_conflicts(take)
     return take, left_out
+
+
+def refuse_conflicts(entries: list[Entry]) -> None:
+    names = {e.name for e in entries}
+    for e in entries:
+        if len(names) != len(entries) or any(str(p) in names for p in PurePosixPath(e.name).parents):
+            raise BoxError(f"the commit has conflicting paths near '{e.name}'")
 
 
 def _reason_to_leave_out(e: Entry) -> str:
@@ -241,15 +263,22 @@ def _write_tar(repo: Path, entries: list[Entry], out: IO[bytes]) -> None:
 
 def image_id(name: str) -> str:
     """The exact image, by its content. Nothing is downloaded."""
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", name):
+        return name
     return docker("image", "inspect", "-f", "{{.Id}}", "--", name)
 
 
+_helper_id = functools.cache(lambda: image_id(HELPER_IMAGE))
+
+
+@functools.cache
 def _limits() -> list[str]:
     cpus, memory = docker("info", "-f", "{{.NCPU}} {{.MemTotal}}").split()
     size = min(3 * GB, int(memory) // 2)
     return ["--cpus", str(min(4, int(cpus))), "--memory", str(size), "--memory-swap", str(size)]
 
 
+@functools.cache
 def _image_volumes(image: str) -> list[str]:
     """Places the image declares as volumes would be unlimited disk; give them small memory disks instead."""
     flags: list[str] = []
@@ -287,7 +316,7 @@ class Box:
         if (space := doctor.space()).state == "STOP":
             raise BoxError(f"Only {space.text}. Next: {space.next_step}")
         self.cancel = cancel or threading.Event()
-        self.image, self.helper = image_id(image), image_id(HELPER_IMAGE)
+        self.image, self.helper = image_id(image), _helper_id()
         self.limits = _limits()
         self.places = _image_volumes(self.image)
         self.volume = f"{LABEL}-{self.task}-{uuid4().hex[:8]}"
@@ -295,9 +324,8 @@ class Box:
     def __enter__(self) -> "Box":
         try:
             docker("volume", "create", *self._labels(), self.volume)
-            # The only command that runs as root: give the empty volume to the ordinary user.
-            self._helper(["chown", "1000:1000", "/work"], "CHOWN")
-            self.disk_before = self.look().disk_used
+            # Only our own fixed helper commands run as root: here, give the empty volume to the ordinary user.
+            self.disk_before = self.look("chown 1000:1000 /work; ").disk_used
         except BaseException:
             self._remove()
             raise
@@ -307,13 +335,19 @@ class Box:
         self._remove()
 
     def _remove(self) -> None:
+        with uninterrupted():  # a second Ctrl+C must not stop the cleanup
+            self._remove_all()
+
+    def _remove_all(self) -> None:
         problem = ""
         for pause in (0, 0.5, 1, 2):
             time.sleep(pause)
             try:
-                for item in our_items():
-                    if item.kind == "container" and item.name.startswith(self.volume):
-                        _delete(item)
+                # Normally each command has removed its container already, so this one call is enough.
+                if problem:
+                    for item in our_items():
+                        if item.kind == "container" and item.name.startswith(self.volume):
+                            _delete(item)
                 docker("volume", "rm", "-f", self.volume)
                 return
             except BoxError as e:
@@ -338,6 +372,11 @@ class Box:
 
     def copy_in(self, repo: Path, commit: str) -> Copied:
         entries, left_out = list_commit(repo, commit_id(repo, commit))
+        self.copy_entries(repo, entries)
+        return Copied(len(entries), left_out)
+
+    def copy_entries(self, repo: Path, entries: list[Entry]) -> None:
+        refuse_conflicts(entries)
         if sum(e.size for e in entries) > MAX_FILES:
             raise BoxError("the project is larger than the 3 GB limit")
         r = self.run(
@@ -346,13 +385,12 @@ class Box:
         )
         if r.status != "EXITED" or r.code:
             raise BoxError(f"copying the files failed: {r.status} {r.output[-300:]}")
-        return Copied(len(entries), left_out)
 
-    def look(self) -> Look:
+    def look(self, first: str = "") -> Look:
         """Measure the volume and the disk behind it. May look into folders that project code has closed."""
-        measure = "du -sk /work; df -k --output=used,avail,iavail /work"
+        measure = first + "du -sk /work; df -k --output=used,avail,iavail /work"
         # du complains when a file vanishes while it counts; that is normal, so only its total matters.
-        out = self._helper(["sh", "-c", measure], "DAC_READ_SEARCH", ok=False)
+        out = self._helper(["sh", "-c", measure], "CHOWN" if first else "DAC_READ_SEARCH", ok=False)
         m = re.search(r"^(\d+)\t/work$[\s\S]*^\s*(\d+)\s+(\d+)\s+(\d+)\s*$", out, re.M)
         if not m:
             raise BoxError("could not measure the disk use of the project")
@@ -379,9 +417,10 @@ class Box:
         name = container[1]
         try:
             docker("create", *container, *flags, "--entrypoint", "", image or self.image, *args)
-            mounts = json.loads(docker("inspect", "-f", "{{json .Mounts}}", name))
-            if [m.get("Name") for m in mounts] != [self.volume]:
-                raise BoxError("the container would get a disk that is not ours; refused")
+            if own:  # our own helper image declares no disks
+                mounts = json.loads(docker("inspect", "-f", "{{json .Mounts}}", name))
+                if [m.get("Name") for m in mounts] != [self.volume]:
+                    raise BoxError("the container would get a disk that is not ours; refused")
             return self._watch(name, timeout, feed)
         finally:
             docker("rm", "-f", "-v", name, ok=False)
@@ -393,7 +432,9 @@ class Box:
         pipes: dict[str, Any] = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "start_new_session": True}
         errors: list[Exception] = []
         kept = Kept()
-        with subprocess.Popen(command, stdin=subprocess.PIPE if feed else subprocess.DEVNULL, **pipes) as p:
+        with uninterrupted():
+            p = subprocess.Popen(command, stdin=subprocess.PIPE if feed else subprocess.DEVNULL, **pipes)
+        with p:
             threads = [threading.Thread(target=kept.read, args=(p.stdout,), daemon=True)]
             if feed:
                 threads.append(threading.Thread(target=_feed, args=(feed, p.stdin, errors), daemon=True))
@@ -415,8 +456,9 @@ class Box:
                     if status != "EXITED":
                         break
             finally:
-                with contextlib.suppress(BoxError):  # if Docker hangs, we must still get away
-                    docker("kill", name, ok=False, timeout=20)
+                if p.poll() is None:
+                    with contextlib.suppress(BoxError):  # if Docker hangs, we must still get away
+                        docker("kill", name, ok=False, timeout=20)
                 try:
                     p.wait(20)
                 except subprocess.TimeoutExpired:
@@ -426,6 +468,8 @@ class Box:
         state = json.loads(docker("inspect", "-f", "{{json .State}}", name))
         if state["Error"] or state["StartedAt"].startswith("0001"):
             raise BoxError(f"the command could not start: {state['Error'] or kept.text()[-300:]}")
+        if state["Status"] != "exited" and status == "EXITED":
+            raise BoxError("the connection to Docker broke while the command was running")
         if errors:
             raise errors[0]
         if status == "EXITED":

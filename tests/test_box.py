@@ -22,6 +22,11 @@ def git(repo, *args, **k):
     return p.stdout.strip()
 
 
+def own_items(pid=None):
+    """Only the items of one process, so that two test runs at the same time do not disturb each other."""
+    return [i for i in box.our_items() if i.labels.get("coding-agent-v2.owner") == str(pid or os.getpid())]
+
+
 def py(code):
     return ["python", "-c", code]
 
@@ -43,8 +48,10 @@ class BoxTest(unittest.TestCase):
         git(self.repo, "init", "-q", "-b", "main")
         self.task = None
 
+        self.addCleanup(box._image_volumes.cache_clear)
+
     def nothing_left(self):
-        self.assertEqual(box.our_items(), [])
+        self.assertEqual(own_items(), [])
 
     def image(self, lines):
         tag = "coding-agent-v2/test:" + os.urandom(4).hex()
@@ -111,6 +118,7 @@ class Isolation(BoxTest):
 
     def test_unusual_volume_names_are_refused(self):
         for path in ("/x/../data", "//data", "/a/./data", "/x/../tmp", "/x/../work", "/d:exec"):
+            box._image_volumes.cache_clear()
             with mock.patch.object(box, "docker", return_value=json.dumps({path: {}})):
                 with self.assertRaises(box.BoxError, msg=path):
                     box._image_volumes("x")
@@ -131,10 +139,33 @@ class Isolation(BoxTest):
                 self.assertNotIn("FAKEPW", b.run(["env"]).output)
 
     def test_volumes_declared_by_the_image_become_small_memory_disks(self):
+        box._image_volumes.cache_clear()
         with mock.patch.object(box, "docker", return_value='{"/data":{},"/work":{}}'):
             self.assertEqual(box._image_volumes("x"), ["--tmpfs", "/data:size=64m"])
+        box._image_volumes.cache_clear()
         with mock.patch.object(box, "docker", return_value='{"/d:exec,size=9g":{}}'), self.assertRaises(box.BoxError):
             box._image_volumes("x")
+
+    def test_a_broken_connection_is_not_a_result(self):
+        real = subprocess.Popen
+
+        def popen(args, *a, **k):
+            return real(["true"] if args[:2] == ["docker", "start"] and breaking else args, *a, **k)
+
+        with self.box() as b:
+            real_create, breaking = box.docker, True
+            with mock.patch.object(subprocess, "Popen", popen):
+                with self.assertRaises(box.BoxError):  # never started
+                    b.run(["sleep", "30"])
+
+                def started(*args, **k):
+                    out = real_create(*args, **k)
+                    if args[0] == "create":
+                        real(["docker", "start", out], stdout=subprocess.DEVNULL).wait()
+                    return out
+
+                with mock.patch.object(box, "docker", started), self.assertRaisesRegex(box.BoxError, "connection"):
+                    b.run(["sleep", "30"])
 
     def test_a_hanging_docker_does_not_hang_us(self):
         real = box.docker
@@ -320,7 +351,34 @@ class Cleanup(BoxTest):
             p.send_signal(sig)
             self.assertNotEqual(p.wait(40), 0)
             p.stdout.close()
-            self.assertEqual(box.our_items(), [], (sig, wait))
+            self.assertEqual(own_items(p.pid), [], (sig, wait))
+
+    def test_ctrl_c_right_after_a_docker_call_started(self):
+        # The gap that once left a container behind, forced open at every docker command in turn.
+        code = """
+import signal, subprocess, sys
+from agent import box
+real, count = subprocess.Popen, 0
+class Popen(real):
+    def __init__(self, args, *a, **k):
+        global count
+        super().__init__(args, *a, **k)
+        if args[0] == "docker":
+            count += 1
+            if count == int(sys.argv[1]):
+                signal.raise_signal(signal.SIGINT)
+                sum(range(1000))
+                signal.raise_signal(signal.SIGINT)  # impatient: twice
+subprocess.Popen = Popen
+box.signals_stop_cleanly()
+with box.Box(box.HELPER_IMAGE, task=sys.argv[2]) as b:
+    b.run(["true"])
+"""
+        for n in range(2, 13):
+            task = "gap-" + os.urandom(4).hex()
+            subprocess.run([sys.executable, "-c", code, str(n), task], capture_output=True, timeout=60)
+            names = box.docker("ps", "-a", "--format", "{{.Names}}") + box.docker("volume", "ls", "-q")
+            self.assertNotIn(task, names, n)
 
     def test_leftovers_of_a_killed_launcher_go_and_running_ones_stay(self):
         crash = CRASH.replace("HELPER_IMAGE)", "HELPER_IMAGE, task='same')")
@@ -331,7 +389,9 @@ class Cleanup(BoxTest):
         p.wait()
         p.stdout.close()
         with self.box(task="same") as b:  # same task name, living owner
-            self.assertEqual(box.clean_leftovers(), 2)
+            self.assertEqual(len(own_items(p.pid)), 2)
+            box.clean_leftovers()
+            self.assertEqual(own_items(p.pid), [])
             self.assertEqual(b.run(["echo", "still here"]).output, "still here\n")
 
     def test_a_hostile_image_cannot_mark_the_developers_container_as_ours(self):
