@@ -9,6 +9,7 @@ import functools
 import json
 import os
 import posixpath
+import queue
 import re
 import signal
 import subprocess
@@ -489,6 +490,87 @@ class Box:
             return "TOO_MUCH_DISK"
         low = now.disk_free < MIN_DISK or now.names_free < MIN_NAMES or doctor.space().state == "STOP"
         return "LOW_SPACE" if low else "EXITED"
+
+
+class Session:
+    """One of our own fixed programs in a helper container, asked one line at a time. Use with 'with'.
+
+    The program is ours, but the files it works on are not: every answer has a time limit and a size limit.
+    """
+
+    LINE = 10_000_000
+
+    def __init__(self, b: Box, program: str, write: bool = True) -> None:
+        self.name = b._name()
+        flags = [*HARDENED, *b.limits, *b._labels(), *b._mount(write), "--interactive"]
+        try:
+            docker("create", *self.name, *flags, "--entrypoint", "", b.helper, "python", "-I", "-c", program)
+            with uninterrupted():
+                self.process = subprocess.Popen(
+                    ["docker", "start", "--attach", "--interactive", self.name[1]], stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True,
+                )
+        except BaseException:
+            docker("rm", "-f", "-v", self.name[1], ok=False)
+            raise
+        self.closed = False
+        self.answers: queue.Queue[bytes] = queue.Queue()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self) -> None:
+        assert self.process.stdout  # noqa: S101 - for the type checker
+        while True:
+            line = self.process.stdout.readline(self.LINE)
+            self.answers.put(line)
+            if not line.endswith(b"\n"):  # ended, or far too long
+                return
+
+    def ask(self, question: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
+        end = time.monotonic() + timeout
+        try:
+            # In a thread: a helper that does not read must not block us for ever.
+            w = threading.Thread(target=self._write, args=(json.dumps(question).encode() + b"\n",), daemon=True)
+            w.start()
+            w.join(timeout)
+            answer = json.loads(self.answers.get(timeout=max(0.01, end - time.monotonic())))
+            if not isinstance(answer, dict):
+                raise ValueError
+            return answer
+        except BaseException as e:
+            self.close()  # after a late or missing answer, nothing that follows could be matched to its question
+            if isinstance(e, ValueError | queue.Empty):
+                raise BoxError("the file helper gave no clear answer") from e
+            raise
+
+    def _write(self, data: bytes) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            if self.process.stdin:
+                self.process.stdin.write(data)
+                self.process.stdin.flush()
+
+    def __enter__(self) -> "Session":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        with uninterrupted():
+            docker("rm", "-f", "-v", self.name[1], ok=False)
+            try:
+                self.process.wait(10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self.process.wait(5)
+            self.closed = True
+            self.reader.join(5)
+            with contextlib.suppress(OSError):
+                if self.process.stdin:
+                    self.process.stdin.close()
+            if self.process.stdout and not self.reader.is_alive():
+                self.process.stdout.close()
 
 
 def _feed(feed: Callable[[IO[bytes]], None], out: IO[bytes], errors: list[Exception]) -> None:
