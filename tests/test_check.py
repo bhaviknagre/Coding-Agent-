@@ -92,6 +92,17 @@ class Check(unittest.TestCase):
         (self.repo / "new.txt").write_text("x")
         self.assertEqual(self.check(hook=True)[0], 1)
 
+    def test_a_fresh_machine_without_the_base_image(self):
+        have = self.home / "image"
+        (self.home / "bin/docker").write_text(
+            f"#!/bin/sh\ncase $1 in ps) ;; pull) echo x > {have} ;; images) cat {have} 2>/dev/null ;; *) echo fixed ;; esac\n:\n")  # noqa: E501
+        (self.repo / "tests/test_a.py").write_text(
+            "import unittest, subprocess\nclass A(unittest.TestCase):\n def test_a(self):\n"
+            "  subprocess.run(['docker', 'pull', '-q', 'python:3.12-slim'], check=True)\n")
+        git(self.repo, "add", "-A")
+        code, text = self.check()
+        self.assertEqual((code, "ALL CHECKS PASSED" in text), (0, True), text)
+
     def test_a_failure_is_not_remembered(self):
         self.prepare()
         (self.repo / "tests/test_a.py").write_text("import unittest\nclass A(unittest.TestCase):\n def test_a(self): self.fail()\n")  # noqa: E501

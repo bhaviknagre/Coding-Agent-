@@ -35,8 +35,11 @@ def key() -> str:
         else:
             add(name, b"gone")
     add(sys.version.encode())
-    for command in (["docker", "version"], ["docker", "images", "-q", "python:3.12-slim"],
-                    ["git", "version"]):
+    image = ["docker", "images", "-q", "python:3.12-slim"]
+    if not subprocess.run(image, capture_output=True, check=True).stdout.strip():
+        # A fresh machine: get it now. If a test got it later, the fingerprint would change during the tests.
+        subprocess.run(["docker", "pull", "-q", "python:3.12-slim"], stdout=subprocess.DEVNULL, check=True)
+    for command in (["docker", "version"], image, ["git", "version"]):
         add(subprocess.run(command, capture_output=True, check=True).stdout)
     return h.hexdigest()
 
