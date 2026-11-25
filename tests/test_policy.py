@@ -355,6 +355,21 @@ class Tools(unittest.TestCase):
             with box.Session(self.box, bad) as s, self.assertRaises(box.BoxError):
                 s.ask({})
 
+    def test_a_helper_that_floods_us_is_left_before_it_is_removed(self):
+        calls = []
+        real = box.docker
+
+        def docker(*args, **k):
+            if args[0] == "rm":
+                calls.append(s.process.poll())
+            return real(*args, **k)
+
+        with mock.patch.object(box.Session, "LINE", 10):
+            s = box.Session(self.box, "while True: print('x' * 100000)")
+            with mock.patch.object(box, "docker", docker), self.assertRaises(box.BoxError):
+                s.ask({})
+        self.assertTrue(calls and calls[0] is not None)  # our side had ended when the container was removed
+
     def test_every_call_is_recorded(self):
         self.call("read", path="calc.py", first=1)
         self.call("push")

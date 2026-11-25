@@ -119,17 +119,15 @@ class Item(NamedTuple):
 
 def our_items() -> list[Item]:
     """Our containers, then our volumes. An image can set labels on a container, but not its name: both must match."""
+    # Docker's list already holds the labels we need. Asking each container would wait for one that is stuck.
+    wanted = ("task", "owner")
+    fields = "".join(f'\t{{{{.Label "{LABEL}.{x}"}}}}' for x in wanted)
     items = []
-    for kind, listing in (("container", ["ps", "-a"]), ("volume", ["volume", "ls"])):
-        field = "{{.Names}}" if kind == "container" else "{{.Name}}"
-        names = docker(*listing, "--filter", f"label={LABEL}=task", "--format", field).split()
-        for name in names:
-            if not name.startswith(f"{LABEL}-"):
-                continue
-            labels = "{{json .Config.Labels}}" if kind == "container" else "{{json .Labels}}"
-            text = docker(kind, "inspect", "-f", labels, name, ok=False)  # empty if it is gone by now
-            if text:
-                items.append(Item(kind, name, json.loads(text) or {}))
+    for kind, listing, name in (("container", ("ps", "-a"), "{{.Names}}"), ("volume", ("volume", "ls"), "{{.Name}}")):
+        for line in docker(*listing, "--filter", f"label={LABEL}=task", "--format", name + fields).split("\n"):
+            found, *values = line.split("\t")
+            if found.startswith(f"{LABEL}-"):
+                items.append(Item(kind, found, {f"{LABEL}.{x}": v for x, v in zip(wanted, values, strict=False)}))
     return items
 
 
@@ -557,14 +555,12 @@ class Session:
 
     def close(self) -> None:
         with uninterrupted():
-            docker("rm", "-f", "-v", self.name[1], ok=False)
-            try:
-                self.process.wait(10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    self.process.wait(5)
             self.closed = True
+            # First leave, then remove: on Linux, Docker cannot remove a container while output to us is blocked.
+            self.process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.process.wait(10)
+            docker("rm", "-f", "-v", self.name[1], ok=False)
             self.reader.join(5)
             with contextlib.suppress(OSError):
                 if self.process.stdin:

@@ -328,7 +328,7 @@ class Command(Case):
         git(self.repo, "tag", "b", "main")
         self.assertIn(git(self.repo, "rev-parse", "refs/heads/b")[:12], self.run_agent("verify", "b", answer="n\n")[1])
         git(self.repo, "checkout", "-q", "--orphan", "other")
-        git(self.repo, "commit", "-qm", "x")
+        git(self.repo, "commit", "-qm", "another message, so it is never the same commit")
         git(self.repo, "checkout", "-q", "main")
         self.assertIn("nothing in common", self.run_agent("verify", "other")[1])
         self.assertIn("one --proof", self.run_agent("verify", "b", "--command", "sh x", "--proof", "a", "--proof", "b")[1])  # noqa: E501
