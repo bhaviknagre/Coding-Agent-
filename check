@@ -18,7 +18,25 @@ tool() { docker run --rm --label coding-agent-v2=check --network=none --read-onl
 echo "1/4 lint";  tool ruff check --no-cache .
 echo "2/4 types"; tool mypy agent
 echo "3/4 secrets"; python3 -m agent.scan
-echo "4/4 tests"; python3 -m unittest discover -q -s tests -t .
+
+hook=$([ "$(basename "$0")" = pre-commit ] && echo yes || echo no)
+if [ $hook = yes ] && { ! git diff --quiet || [ -n "$(git ls-files -o --exclude-standard)" ]; }; then
+  echo "What is staged differs from the files on disk, which are what is tested. Next: git add -A"; exit 1
+fi
+# Only the commit hook may use a remembered pass, and only for exactly the files that were tested. ./check itself and GitHub always run every test.
+passed=$(git rev-parse --git-dir)/coding-agent-v2-passed
+before=$(python3 -m tests.run key)
+if [ $hook = yes ] && [ "$(cat "$passed" 2>/dev/null)" = "$before" ]; then
+  echo "4/4 tests: passed before for exactly these files"
+else
+  echo "4/4 tests"
+  rm -f "$passed"
+  python3 -c "from agent import box; box.clean_leftovers()"
+  python3 -m tests.run
+  # Files that were edited while the tests ran are not proven.
+  [ "$(python3 -m tests.run key)" = "$before" ] || { echo "files changed during the tests; run again"; exit 1; }
+  echo "$before" > "$passed"
+fi
 left=$(docker ps -aq --filter label=coding-agent-v2=check | wc -l | tr -d ' ')
 [ "$left" = 0 ] || { echo "containers left: $left"; exit 1; }
 echo "ALL CHECKS PASSED"
