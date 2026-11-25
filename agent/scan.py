@@ -25,7 +25,14 @@ RULES: list[tuple[str, re.Pattern[str]]] = [
         ("home-path", r"/(?:Users|home)/[a-z][a-z0-9_\-]+/"),
     )
 ]
-BLOCKED_NAMES = re.compile(r"(^|/)(\.env(\..*)?|id_[a-z0-9]+|.*\.(pem|key|p12|pfx))$")
+BLOCKED_NAMES = re.compile(
+    r"""(?ix)(^|/)(
+        \.env([._-](?!(example|sample|template)$)[^/]*)? | \.env/.* | \.envrc
+        | id_(rsa|dsa|ecdsa|ed25519)([._-][^/]*)? | [^/]*\.(pem|key|p12|pfx|jks|ppk|kdbx|keystore|tfstate)
+        | \.(netrc|pypirc|npmrc|pgpass|htpasswd|git-credentials) | credentials(\.json)? | secring\.gpg
+        | service[-_]account[^/]*\.json | [^/]*firebase-adminsdk[^/]*\.json | \.docker/config\.json | \.kube/config
+    )$"""
+)
 
 
 def scan_text(text: str) -> list[tuple[int, str]]:
