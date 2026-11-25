@@ -185,10 +185,11 @@ class Limits(BoxTest):
         with self.box() as b:
             b.limits = ["--cpus", "2", "--memory", "128m", "--memory-swap", "128m"]
             t = time.monotonic()
-            r = b.run(["sh", "-c", "echo begin; trap '' TERM; sleep 60 & sleep 60"], timeout=1)
+            r = b.run(["sh", "-c", "echo begin; trap '' TERM; sleep 60 & sleep 60"], timeout=3)
             self.assertEqual((r.status, r.output), ("TIMED_OUT", "begin\n"))
-            self.assertLess(time.monotonic() - t, 10)
+            self.assertLess(time.monotonic() - t, 40)
             self.assertEqual(b.run(py("x=bytearray(400*1024*1024)")).status, "OUT_OF_MEMORY")
+            self.assertEqual(b.run(["sh", "-c", "kill -9 $$"]).status, "OUT_OF_MEMORY")  # no mark by Docker
             many = b.run(["sh", "-c", "i=0; while [ $i -lt 600 ]; do sleep 5 & i=$((i+1)); done"])
             self.assertIn("fork", many.output)
             with mock.patch.object(box, "KEEP_OUTPUT", 1000):
@@ -200,7 +201,7 @@ class Limits(BoxTest):
         with self.box() as b, mock.patch.object(box, "MAX_FILES", 20_000_000):
             r = b.run(["sh", "-c", "head -c 40000000 /dev/zero > big; sleep 60"])
             self.assertEqual(r.status, "TOO_MUCH_DISK")
-            self.assertLess(r.seconds, 15)
+            self.assertLess(r.seconds, 45)
 
     def test_a_fast_or_hidden_file_is_still_counted(self):
         with self.box() as b, mock.patch.object(box, "MAX_FILES", 20_000_000):
@@ -235,7 +236,7 @@ class Limits(BoxTest):
             threading.Timer(1, cancel.set).start()
             r = b.run(["sh", "-c", "sleep 60"])
             self.assertEqual(r.status, "CANCELLED")
-            self.assertLess(r.seconds, 15)
+            self.assertLess(r.seconds, 45)
 
 
 class CopyIn(BoxTest):

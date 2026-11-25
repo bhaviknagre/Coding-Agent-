@@ -478,7 +478,8 @@ class Box:
             raise errors[0]
         if status == "EXITED":
             # Also when only a child was killed: its missing work makes the result doubtful.
-            status = "OUT_OF_MEMORY" if state["OOMKilled"] else self._too_much()
+            # 137 means killed, and here it was not us: on Linux, Docker may set OOMKilled a moment too late.
+            status = "OUT_OF_MEMORY" if state["OOMKilled"] or state["ExitCode"] == 137 else self._too_much()
         return Result(status, state["ExitCode"], kept.text(), kept.truncated, time.monotonic() - started)
 
     def _too_much(self) -> str:
