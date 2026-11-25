@@ -131,18 +131,33 @@ class Draw(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(approve.ask_human("q"), NO)
         for typed, want in (("y\n", YES), ("\n", NO), ("yes\n", Answer(False, "yes")), ("n too big\n", Answer(False, "n too big"))):  # noqa: E501
+            ready, written = os.pipe()
             pid, fd = pty.fork()
             if pid == 0:
-                got = approve.ask_human("q")
-                os._exit(0 if got == want else 1)
+                os.read(ready, 1)  # the early keys are there now
+                os._exit(0 if approve.ask_human("q") == want else 1)
             os.write(fd, b"y\n")  # too early: must not count
+            os.write(written, b"x")
             text = b""
             while b"Enter: " not in text:
                 text += os.read(fd, 1000)
-            time.sleep(0.05)
+            time.sleep(0.3)  # the keys before the question are thrown away now
             os.write(fd, typed.encode())
             self.assertEqual(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]), 0, typed)
-            os.close(fd)
+            for x in (fd, ready, written):
+                os.close(x)
+
+    def test_a_key_between_forgetting_and_asking_does_not_count(self):
+        # The order is what matters: the question is complete on the screen before earlier keys are forgotten.
+        steps = []
+        with mock.patch.object(approve.sys, "stdin") as keys, mock.patch.object(approve.sys, "stdout") as screen:
+            keys.readline.side_effect = lambda: steps.append("read") or "y\n"
+            screen.write.side_effect = lambda x: steps.append("show") if "Enter: " in x else None
+            with mock.patch.object(approve.termios, "tcdrain", lambda *a: steps.append("drain")), mock.patch.object(
+                approve.termios, "tcflush", lambda *a: steps.append("forget")
+            ):
+                self.assertEqual(approve.ask_human("q"), YES)
+        self.assertEqual(steps, ["show", "drain", "forget", "read"])
 
 
 class Tools(unittest.TestCase):

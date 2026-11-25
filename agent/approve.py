@@ -103,10 +103,15 @@ def ask_human(question: str) -> Answer:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return NO
     print(question)
-    sys.stdout.flush()
+    print("Type y = yes, anything else = no (you may say why), then Enter: ", end="", flush=True)
+    # First the whole question on the screen, then forget every key: none typed before it can answer it.
+    termios.tcdrain(sys.stdout.fileno())
     termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
     try:
-        answer = input("Type y = yes, anything else = no (you may say why), then Enter: ").strip()
+        answer = sys.stdin.readline()
+        if not answer:
+            raise EOFError
+        answer = answer.strip()
     except EOFError:
         return NO
     return Answer(True) if answer in ("y", "Y") else Answer(False, reason=answer[:500])
