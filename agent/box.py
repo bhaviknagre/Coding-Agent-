@@ -173,13 +173,15 @@ def _alive(owner: str) -> bool:
 
 def git_bytes(repo: Path, *args: str) -> bytes:
     """Read the developer's own repository. Nothing is fetched, replaced or written."""
-    p = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, env=_git_env())
+    # The developer's colour setting would put escape codes into the answers that we read.
+    plain = ("-c", "color.ui=false", "-c", "color.grep=false", "-c", "color.diff=false")
+    p = subprocess.run(["git", "-C", str(repo), *plain, *args], capture_output=True, env=git_env())
     if p.returncode:
         raise BoxError(f"Git refused '{args[0]}': {p.stderr.decode('utf-8', 'replace').strip()[-300:]}")
     return p.stdout
 
 
-def _git_env() -> dict[str, str]:
+def git_env() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return env | {"GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1", "GIT_NO_REPLACE_OBJECTS": "1"}
 
@@ -224,9 +226,12 @@ def refuse_conflicts(entries: list[Entry]) -> None:
             raise BoxError(f"the commit has conflicting paths near '{e.name}'")
 
 
+def unsafe_path(name: str) -> bool:
+    return any(p in ("", ".", "..") or p.lower().rstrip(". ") == ".git" for p in name.split("/"))
+
+
 def _reason_to_leave_out(e: Entry) -> str:
-    parts = e.name.split("/")
-    if any(p in ("", ".", "..") or p.lower().rstrip(". ") == ".git" for p in parts):
+    if unsafe_path(e.name):
         return "unsafe path"
     if e.mode == "160000":
         return "submodule"
@@ -237,7 +242,7 @@ def _reason_to_leave_out(e: Entry) -> str:
 
 def _write_tar(repo: Path, entries: list[Entry], out: IO[bytes]) -> None:
     command = ["git", "-C", str(repo), "cat-file", "--batch"]
-    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=_git_env()) as p:
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=git_env()) as p:
         assert p.stdin and p.stdout  # noqa: S101 - for the type checker
         with tarfile.open(fileobj=out, mode="w|", format=tarfile.PAX_FORMAT) as tar:
             for e in entries:
