@@ -53,6 +53,23 @@ class Demo(unittest.TestCase):
         self.assertIn("EXPERIMENTAL", out.getvalue())
         self.assertIn('"status": "EXPERIMENTAL"', next(self.home.rglob("models.json")).read_text())
 
+    def test_a_busy_service_says_nothing_about_the_model(self):
+        from agent.model import ModelError
+
+        class Busy:
+            name = "gemini:busy"
+
+            def call(self, messages, tools):
+                raise ModelError("the model service said 503: high demand")
+
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}), contextlib.redirect_stdout(out), \
+                mock.patch("agent.screen.choose_model", return_value=(Busy(), ())):
+            self.assertEqual(demo.model_test(["gemini"]), 1)
+        self.assertIn("was not tested: the service did not answer", out.getvalue())
+        self.assertNotIn("EXPERIMENTAL", out.getvalue())
+        self.assertFalse(any("gemini:busy" in p.read_text() for p in self.home.rglob("models.json")))
+
     def test_report_is_escaped(self):
         page = demo.page([("<script>x</script>", "VERIFIED", "a\x1b[2J & <b>")], 1)
         self.assertNotIn("<script>x", page)

@@ -197,6 +197,16 @@ class Chat(unittest.TestCase):
         self.assertNotIn("def mul", git(self.repo, "show", f"{branch}:calc.py"))
         self.assertIn("goes on from the last checked work", text)
 
+    def test_quit_without_a_slash_leaves(self):
+        args = argparse.Namespace(model="script", files=[], proof=[], command="sh t.sh", image="python:3.12-slim")
+        for word in ("quit", "exit", "Bye"):
+            with mock.patch("agent.chat.repository", return_value=self.repo), \
+                    mock.patch("agent.chat.screen.choose_model", return_value=(FakeModel([]), ())), \
+                    mock.patch("builtins.input", side_effect=[word]), contextlib.redirect_stdout(io.StringIO()):
+                c = chat.Chat(args)
+                self.assertIsNone(c.ask())
+                self.assertTrue(c.quit)
+
     def test_open_questions_and_odd_proof_text(self):
         q = call_message("ask", question="Which function?")
         code, text, _ = self.chat(["fix something", "/proof 'a", "/quit"], [q, READ, FIX, DONE],

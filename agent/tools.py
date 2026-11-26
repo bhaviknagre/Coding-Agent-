@@ -273,7 +273,7 @@ class Toolbox:
             return self._run(list(self.contract.command))
         if action.tool == "ask":
             text = mask(a["question"], self.secrets)[:1000]
-            words = approve.rows(text, "THE AGENT ASKS (its words): ", approve.screen_width())
+            words = approve.rows(text, "THE AGENT ASKS (its words): ", approve.screen_width(), words=True)
             answer = self.open_question("\n".join(["", *words]))
             return Result("OK", answer.reason or ("yes" if answer.yes else "the human gave no answer"))
         self.finished = True

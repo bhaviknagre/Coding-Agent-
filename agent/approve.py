@@ -38,17 +38,25 @@ def exact(text: str) -> str:
     return "".join(out)
 
 
-def rows(text: str, mark: str, width: int) -> list[str]:
-    """Content with our mark on every row of the screen. The terminal never wraps, so no row starts with content."""
+def rows(text: str, mark: str, width: int, words: bool = False) -> list[str]:
+    """Content with our mark on every row of the screen. The terminal never wraps, so no row starts with content.
+    words: break after a space where one is near, for plain sentences; nothing is left out either way."""
     room, out = width - len(mark) - 1, []
+
+    def size(ch: str) -> int:
+        return 1 if " " <= ch <= "~" or ch == "\u21e5" else 2
+
     for line in text.split("\n"):
         row, used = "", 0
         for ch in exact(line):
-            size = 1 if " " <= ch <= "~" or ch == "\u21e5" else 2
-            if used + size > room:
-                out.append(mark + row)
-                row, used = "", 0
-            row, used = row + ch, used + size
+            if used + size(ch) > room:
+                cut = row.rfind(" ") + 1 if words else 0
+                if cut < len(row) // 2:
+                    cut = len(row)
+                out.append(mark + row[:cut])
+                row = row[cut:]
+                used = sum(size(c) for c in row)
+            row, used = row + ch, used + size(ch)
         out.append(mark + row)
     return out
 
@@ -75,7 +83,7 @@ def draw(
         # Each part in quotes, so it is clear where an argument ends. There is no shell.
         facts += rows("  ".join(json.dumps(x, ensure_ascii=False) for x in a["program"]), "Command   ", width)
         facts += rows("in a container: no network, no keys, not your folder. It can change the agent's copy, and run "
-                      "any file of the project, also files that are not shown here.", "Runs      ", width)
+                      "any file of the project, also files that are not shown here.", "Runs      ", width, words=True)
     facts += rows(decision.rule, "Asks because: ", width)
     content: list[str] = []
     if action.tool == "edit":
@@ -90,7 +98,7 @@ def draw(
             part = ["  NOT INSPECTABLE: not text, too long, or it seems to hold a secret"]
         used += part
     # The agent's words come after the facts and before the content, and cannot start a row.
-    claim = rows(" ".join(reason.split())[:300] or "nothing", "The agent says (its claim): ", width)
+    claim = rows(" ".join(reason.split())[:300] or "nothing", "The agent says (its claim): ", width, words=True)
     out = ["", bar, *facts, *claim, bar, *content, *used]
     if content or used:
         out += [bar, *facts]  # again, because the first part may have scrolled away

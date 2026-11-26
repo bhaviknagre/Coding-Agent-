@@ -143,6 +143,33 @@ class Service(unittest.TestCase):
         with self.assertRaisesRegex(ModelError, "429"):
             self.model.call([], [])
 
+    def test_a_busy_default_model_gives_way_to_a_lighter_one(self):
+        notes = []
+        self.model.busy, self.model.note = ["light-1", "light-2"], notes.append
+        busy = (503, [{"error": {"code": 503, "message": "This model is currently experiencing high demand."}}], {})
+        FakeService.replies = [busy] * provider.TRIES + [answer({"role": "assistant", "content": "ok"})]
+        self.assertEqual(self.model.call([], []).message["content"], "ok")
+        self.assertEqual([b["model"] for _, b in FakeService.seen][-1], "light-1")
+        self.assertEqual(self.model.name, "gemini:light-1")
+        self.assertEqual(notes, ["test-model cannot answer now (503); using light-1 from now on"])
+        # this model's quota used up (429): the next one has its own
+        FakeService.replies = [(429, {"error": {"message": "quota"}}, {})] * provider.TRIES + [
+            answer({"role": "assistant", "content": "ok2"})]
+        self.assertEqual(self.model.call([], []).message["content"], "ok2")
+        self.assertEqual(self.model.model, "light-2")
+        # none left: the plain message, with what to do
+        FakeService.replies = [(429, {"error": {"message": "quota"}}, {})] * provider.TRIES
+        with self.assertRaisesRegex(ModelError, "429: quota. Next: wait a minute"):
+            self.model.call([], [])
+
+    def test_a_chosen_model_is_not_changed_and_the_message_is_plain(self):
+        FakeService.replies = [(503, {"error": {"message": "high demand"}}, {})] * provider.TRIES
+        with self.assertRaises(ModelError) as e:
+            self.model.call([], [])
+        self.assertIn("503: high demand. Next: try again in a few minutes", str(e.exception))
+        self.assertNotIn("{", str(e.exception))
+        self.assertEqual(self.model.model, "test-model")
+
     def test_refused_key_and_errors_never_show_the_key(self):
         FakeService.replies = [(401, {"error": f"bad key {FAKE}"}, {})]
         with self.assertRaisesRegex(ModelError, "agent key set gemini") as e:

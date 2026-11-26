@@ -285,7 +285,7 @@ class Task:
             raise Stopped("the agent stopped too often without finishing")
         if self.empty == 1:
             return "Please continue by calling a tool, or call finish."
-        words = rows(mask(text, self.secrets)[:1000], "It says (its words): ", screen_width())
+        words = rows(mask(text, self.secrets)[:1000], "It says (its words): ", screen_width(), words=True)
         answer = self.human("\n".join(["", "The agent stopped without finishing.", *words]))
         if answer.yes or answer.reason:
             return answer.reason or "Continue."

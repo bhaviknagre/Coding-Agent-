@@ -15,7 +15,7 @@ from agent.log import Log
 from agent.loop import Outcome, Task
 from agent.model import FakeModel, Model, Replay
 from agent.policy import DEPENDENCIES
-from agent.provider import GEMINI_MODEL, OpenAIFormat
+from agent.provider import GEMINI_BUSY, GEMINI_MODEL, OpenAIFormat
 from agent.verify import Stop, data_folder, repository, visible
 
 SETUP = ("Dockerfile", "devcontainer.json")  # files that decide what the image is
@@ -94,7 +94,7 @@ def start_screen(contract: Contract, image: str, model: Model, same_as_before: b
     else:
         add(approve.rows(f"{image}  (no network; your folder is not mounted)", "Image     ", width))
         add(approve.rows(" ".join(contract.command), "Tests     ", width))
-        add(approve.rows(provider_notice(model), "Model     ", width))
+        add(approve.rows(provider_notice(model), "Model     ", width, words=True))
     add(approve.rows("you, before tests, settings, dependencies, other files, commands", "Asks      ", width))
     return "\n".join(rows)
 
@@ -119,7 +119,8 @@ def choose_model(name: str) -> tuple[Model, tuple[str, ...]]:
             raise Stop(f"No key: {e}") from None
         if not secret:
             raise Stop("No Gemini key is stored. Next: agent key set gemini")
-        return OpenAIFormat(secret, rest or GEMINI_MODEL), (secret,)
+        note = lambda text: print(f"  Note: {text}", flush=True)  # noqa: E731
+        return OpenAIFormat(secret, rest or GEMINI_MODEL, busy=() if rest else GEMINI_BUSY, note=note), (secret,)
     raise Stop("Choose a model: --model gemini, or --model recorded:FILE. Next: agent key set gemini")
 
 

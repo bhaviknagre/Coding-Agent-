@@ -152,6 +152,17 @@ class Parts(unittest.TestCase):
         self.assertIn("<U+202E>", text)
         self.assertTrue(all(len(row) < 60 for row in text.split("\n")))
 
+    def test_sentences_break_between_words_and_nothing_is_lost(self):
+        from agent import approve
+
+        text = "your request and the code the agent reads are sent to Google. On the free tier Google may use it"
+        rows = approve.rows(text, "Model     ", 50, words=True)
+        self.assertTrue(all(len(r) < 50 for r in rows), rows)
+        self.assertTrue(all(r.endswith(" ") for r in rows[:-1]), rows)  # no word is cut in two
+        self.assertEqual("".join(r.removeprefix("Model     ") for r in rows), text)
+        one_word = approve.rows("x" * 100, "M ", 30, words=True)  # no space to break at: cut anyway
+        self.assertEqual("".join(r[2:] for r in one_word), "x" * 100)
+
     def test_screen_shows_no_raw_control_text(self):
         import contextlib
         import io

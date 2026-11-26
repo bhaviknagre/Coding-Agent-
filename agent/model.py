@@ -16,6 +16,9 @@ MAX_REPLY = 1_000_000
 class ModelError(Exception):
     """The model service gave no usable reply. The message is shown to the human."""
 
+    busy = False  # busy, or out of quota: another model may answer
+    code = 0
+
 
 class Reply(NamedTuple):
     message: Message

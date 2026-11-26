@@ -42,7 +42,7 @@ class Chat:
             print(f"  ⏺ {visible(text)}", flush=True)
 
     def words(self, text: str) -> None:
-        for row in approve.rows(" ".join(text.split())[:600], "  The agent says: ", approve.screen_width()):
+        for row in approve.rows(" ".join(text.split())[:600], "  The agent says: ", approve.screen_width(), words=True):
             print(row)
 
     def human(self, question: str) -> Answer:
@@ -52,7 +52,10 @@ class Chat:
         if o.branch:
             self.branch, self.commit = o.branch, o.commit
         level = f" ({o.receipt['level']})" if o.receipt else ""
-        print(f"  ⏺ Independent check: {o.state}{level}")
+        if o.state in ("STOPPED", "BLOCKED"):  # nothing was checked: not a verdict
+            print("  ⏺ Stopped before the check")
+        else:
+            print(f"  ⏺ Independent check: {o.state}{level}")
         if o.reason:
             print(f"    {visible(o.reason)}")
         for s in (o.receipt or {}).get("steps", []):
@@ -74,6 +77,8 @@ class Chat:
                 return None
             if not line:
                 continue
+            if line.lower() in ("quit", "exit", "bye", "q"):  # like Claude Code: no slash needed to leave
+                line = "/quit"
             if not line.startswith("/"):
                 return line
             try:

@@ -189,6 +189,11 @@ def model_test(argv: Sequence[str]) -> int:
                      show=lambda s: print(f"     doing now: {visible(s)}", flush=True)).run()
         finally:
             log.close()
+    print(f"Result: {o.state}" + (f" ({visible(o.reason)})" if o.reason else ""))
+    if o.state == "BLOCKED" and "model service" in o.reason:
+        # Google being busy or unreachable says nothing about the model: nothing is recorded.
+        print(f"{model.name} was not tested: the service did not answer. Nothing is recorded; try again later.")
+        return 1
     status = "TESTED" if o.state == "VERIFIED" else "EXPERIMENTAL"
     saved = data_folder() / "models.json"
     try:
@@ -197,7 +202,6 @@ def model_test(argv: Sequence[str]) -> int:
         known = {}
     known[model.name] = {"status": status, "result": o.state, "at": time.strftime("%Y-%m-%d %H:%M")}
     saved.write_text(json.dumps(known, indent=1))
-    print(f"Result: {o.state}" + (f" ({visible(o.reason)})" if o.reason else ""))
     print(f"{model.name} is {status}." + ("" if status == "TESTED" else " It may still work; results need care."))
     return 0 if status == "TESTED" else 1
 
