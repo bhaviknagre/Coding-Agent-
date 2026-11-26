@@ -3,6 +3,7 @@ import sys
 
 USAGE = """usage: agent COMMAND
   doctor            check what is needed
+  demo [--keep]     see it work on a made-up project, without a key (about 3 minutes)
   run "REQUEST"     let the agent change this repository on a new branch, then check it
   verify BRANCH     check a branch in fresh containers (no key needed)
   merge BRANCH      show how to merge; only you merge
@@ -15,9 +16,15 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     import sqlite3
 
-    from agent import box, doctor, gitsafe, mask, screen, verify
+    from agent import box, demo, doctor, gitsafe, mask, screen, verify
 
-    commands = {"run": screen.run, "verify": verify.verify, "merge": verify.merge, "discard": verify.discard}
+    commands = {
+        "demo": demo.demo,
+        "run": screen.run,
+        "verify": verify.verify,
+        "merge": verify.merge,
+        "discard": verify.discard,
+    }
     name, rest = (sys.argv[1:2] or [""])[0], sys.argv[2:]
     if name == "doctor" and not rest:
         return doctor.main()
@@ -26,7 +33,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     box.signals_stop_cleanly()
     try:
-        if name in ("run", "verify"):
+        if name in ("run", "verify", "demo"):
             box.clean_leftovers()
         return commands[name](rest)
     except (verify.Stop, box.BoxError, gitsafe.Refused, ValueError, OSError, sqlite3.Error) as e:
