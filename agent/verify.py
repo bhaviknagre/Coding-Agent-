@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
 
-from agent import box, gitsafe, receipt
+from agent import box, gitsafe, image, receipt
 from agent.approve import ask_human
 from agent.checker import Change, Checker, Contract, changes, test_tool
 from agent.log import Log, _masked
@@ -97,13 +97,16 @@ def show_protected(repo: Path, start: str, names: Sequence[Change]) -> str:
     return "\n".join(out)
 
 
+IMAGE_HELP = "a Docker image on this computer (default: the project's Dockerfile, built after your yes)"
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agent verify", description="Check a branch in fresh containers.")
     p.add_argument("branch")
     p.add_argument("--command", default="python -m unittest", help="the full test command")
     p.add_argument("--proof", action="append", default=[], help="a test that fails before and passes after; repeatable")
     p.add_argument("--base", default="", help="where the branch started (default: where it left the current branch)")
-    p.add_argument("--image", default=box.HELPER_IMAGE, help="a Docker image that is already on this computer")
+    p.add_argument("--image", default="", help=IMAGE_HELP)
     p.add_argument("--original-tests", action="store_true", help="do not use the branch's changed tests and settings")
     return p
 
@@ -122,6 +125,8 @@ def verify(argv: Sequence[str], repo: Path | None = None) -> int:
     proof = tuple(a.proof) if kind != "command" else tuple(shlex.split(" ".join(a.proof)))
     what = f"check {a.branch}"
     contract = Contract(what, tuple(c.path for c in changed), command, proof)
+    # The image comes from where the branch started: a branch cannot choose the image that checks it.
+    a.image = image.choose(repo, start, a.image)
     c = Checker(repo, start, result, contract, a.image)
     c.prepare()
     protected = [x for x in changed if x.path in c.restored and x.new_mode in ("100644", "100755")]

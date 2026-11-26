@@ -7,7 +7,7 @@ import shlex
 import sys
 from collections.abc import Sequence
 
-from agent import approve, box, gitsafe, screen
+from agent import approve, box, gitsafe, image, screen
 from agent.approve import Answer, ask_human, ask_open
 from agent.checker import Contract, test_tool
 from agent.log import Log
@@ -29,7 +29,7 @@ class Chat:
         self.model, self.secrets = screen.choose_model(a.model)
         command = tuple(shlex.split(a.command)) if a.command else screen.choose_command(self.repo)
         self.contract = Contract("", tuple(a.files) or ("*",), command, tuple(a.proof))
-        self.image = a.image
+        self.image = image.choose(self.repo, box.commit_id(self.repo, "HEAD"), a.image)
         box.image_id(self.image)  # an unknown image stops here
         self.branch, self.commit, self.quit = "", "", False
         self.typed_proof: tuple[str, ...] = ()  # a /proof typed at this prompt, for the next request only
@@ -180,7 +180,7 @@ def main(argv: Sequence[str]) -> int:
     p.add_argument("--files", action="append", default=[], help="files or folders/ it may change; default: all")
     p.add_argument("--proof", action="append", default=[], help="a test that must pass at the end")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")
-    p.add_argument("--image", default=box.HELPER_IMAGE, help="a Docker image that is already on this computer")
+    p.add_argument("--image", default="", help=screen.IMAGE_HELP)
     a = p.parse_args(argv)
     if not sys.stdin.isatty():
         raise Stop("The chat needs a terminal. Next: use 'agent run \"REQUEST\"' in scripts.")

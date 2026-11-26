@@ -121,12 +121,13 @@ and the story of how it was built: [CASE-STUDY.md](CASE-STUDY.md).
 which reuses a pass for exactly the same files. GitHub runs it on every push.
 
 ## Known limits
-- **Not built in this version:** MCP, a web page, resuming a stopped task, installing packages for a project, building a
-  project's own Dockerfile, memory between separate chats, held-back examples, other languages' test reports,
+- **Not built in this version:** MCP, a web page, resuming a stopped task, installing packages without a
+  Dockerfile, memory between separate chats, held-back examples, other languages' test reports,
   native Windows, any model other than Gemini (the code reaches any OpenAI-format service, untested).
 - The dashboard's containers have the normal Docker network (a page needs a port); Grafana's update checks and news
   are switched off.
-- Projects that need extra packages need a Docker image that already has them: `--image NAME`.
+- Projects that need extra packages: if the project has a `Dockerfile`, the agent shows it in full and asks before
+  building it once (from the committed files; secret-looking files are left out). Or give an image: `--image NAME`.
 - Two known cheats are not caught: answers hard-coded for the tests, and values that claim to equal everything.
 - Containers share your computer's kernel: this limits harm, it is not complete protection.
 - The key is in your macOS Keychain; another program running as you can read it there. It is never in a file, a log,

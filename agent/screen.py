@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent import approve, box, key
+from agent import approve, box, image, key
 from agent.approve import Answer, ask_human
 from agent.checker import Contract, test_tool
 from agent.log import Log
@@ -123,13 +123,16 @@ def choose_model(name: str) -> tuple[Model, tuple[str, ...]]:
     raise Stop("Choose a model: --model gemini, or --model recorded:FILE. Next: agent key set gemini")
 
 
+IMAGE_HELP = "a Docker image on this computer (default: the project's Dockerfile, built after your yes)"
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agent run", description="Let the agent change this repository, then check it.")
     p.add_argument("request")
     p.add_argument("--proof", action="append", default=[], help="a test that must pass at the end; repeatable")
     p.add_argument("--files", action="append", default=[], help="files or folders/ it may change; default: all")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")
-    p.add_argument("--image", default=box.HELPER_IMAGE, help="a Docker image that is already on this computer")
+    p.add_argument("--image", default="", help=IMAGE_HELP)
     p.add_argument("--model", default="gemini", help="gemini (default), gemini:MODEL, recorded:FILE or script:FILE")
     p.add_argument("--plain", action="store_true", help="no redrawn lines")
     p.add_argument("--details", action="store_true", help="a line for every step")
@@ -147,6 +150,7 @@ def run(argv: Sequence[str]) -> int:
     proof = tuple(a.proof) if test_tool(command)[0] != "command" else tuple(shlex.split(" ".join(a.proof)))
     contract = Contract(" ".join(a.request.split()), tuple(a.files) or ("*",), command, proof)
     model, secrets = choose_model(a.model)
+    a.image = image.choose(repo, box.commit_id(repo, "HEAD"), a.image)
     box.image_id(a.image)  # an unknown image stops here, before any question
     key = fingerprint(repo, a.image, command, model.name)
     memory = remembered(repo)
