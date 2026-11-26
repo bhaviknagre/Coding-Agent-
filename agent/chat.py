@@ -181,7 +181,7 @@ class Chat:
 
 def main(argv: Sequence[str]) -> int:
     p = argparse.ArgumentParser(prog="agent", description="A chat with the coding agent, in this repository.")
-    p.add_argument("--model", default="gemini", help="gemini (default), gemini:MODEL, recorded:FILE or script:FILE")
+    p.add_argument("--model", default="gemini", help=screen.MODEL_HELP)
     p.add_argument("--files", action="append", default=[], help="files or folders/ it may change; default: all")
     p.add_argument("--proof", action="append", default=[], help="a test that must pass at the end")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")

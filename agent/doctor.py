@@ -74,10 +74,14 @@ def key() -> Result:
     if sys.platform != "darwin":
         return Result("WARN", "Key", "key store not supported here yet", "Type the key when asked.")
     chain = [os.environ["CODING_AGENT_KEYCHAIN"]] if os.environ.get("CODING_AGENT_KEYCHAIN") else []
-    code, _ = run("security", "find-generic-password", "-s", KEY_ITEM, "-a", KEY_ACCOUNT, *chain)
-    if code == 0:
-        return Result("OK", "Key", "Gemini key stored in the Keychain")
-    return Result("WARN", "Key", "none stored", "For the live model: agent key set gemini. Demo, verify need none.")
+    from agent import services
+
+    found = [n for n in services.all_services()
+             if run("security", "find-generic-password", "-s", KEY_ITEM, "-a", n, *chain)[0] == 0]
+    if found:
+        return Result("OK", "Key", "stored in the Keychain for: " + ", ".join(found))
+    return Result("WARN", "Key", "none stored",
+                  "For the live model: agent key set gemini (agent key list: all services). Demo, verify need none.")
 
 
 def check_all() -> list[Result]:

@@ -8,14 +8,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent import approve, box, image, key
+from agent import approve, box, image, key, services
 from agent.approve import Answer, ask_human
 from agent.checker import Contract, test_tool
 from agent.log import Log
 from agent.loop import Outcome, Task
 from agent.model import FakeModel, Model, Replay
 from agent.policy import DEPENDENCIES
-from agent.provider import GEMINI_BUSY, GEMINI_MODEL, OpenAIFormat
+from agent.provider import Limiter, OpenAIFormat
 from agent.verify import Stop, data_folder, repository, visible
 
 SETUP = ("Dockerfile", "devcontainer.json")  # files that decide what the image is
@@ -78,8 +78,11 @@ def remembered(repo: Path) -> Path:
 def provider_notice(model: Model) -> str:
     if model.name in ("fake", "recorded"):
         return "none: a script or a recording answers; no code leaves this computer"
-    return (f"{model.name}: your request and the code the agent reads are sent to Google. On the free tier Google may "
-            "use it to improve its products, and people may read it: do not use it for private code")
+    s = services.find(model.name.partition(":")[0])
+    company = s.company if s else "the model service"
+    extra = f" {s.free_tier_note}: do not use it for private code." if s and s.free_tier_note else ""
+    untested = "" if s and s.tested else " This service is not tested yet: run agent model-test first."
+    return f"{model.name}: your request and the code the agent reads are sent to {company}.{extra}{untested}"
 
 
 def start_screen(contract: Contract, image: str, model: Model, same_as_before: bool, width: int) -> str:
@@ -112,18 +115,27 @@ def choose_model(name: str) -> tuple[Model, tuple[str, ...]]:
         return FakeModel(json.loads(Path(rest).read_text())), ()
     if kind == "recorded" and rest:
         return Replay(Path(rest)), ()
-    if kind == "gemini":
+    s = services.find(kind)
+    if s:
         try:
-            secret = key.load("gemini") or (key.ask("gemini") if sys.platform != "darwin" else "")
+            secret = key.load(s.name) or (key.ask(s.name) if sys.platform != "darwin" else "")
         except (key.KeyError_, EOFError, KeyboardInterrupt) as e:
             raise Stop(f"No key: {e}") from None
         if not secret:
-            raise Stop("No Gemini key is stored. Next: agent key set gemini")
+            raise Stop(f"No {s.name} key is stored. Next: agent key set {s.name}")
         note = lambda text: print(f"  Note: {text}", flush=True)  # noqa: E731
-        return OpenAIFormat(secret, rest or GEMINI_MODEL, busy=() if rest else GEMINI_BUSY, note=note), (secret,)
-    raise Stop("Choose a model: --model gemini, or --model recorded:FILE. Next: agent key set gemini")
+        try:
+            services.check_address(s.address)
+        except ValueError as e:
+            raise Stop(f"{s.name}: {e}") from None
+        model = OpenAIFormat(secret, rest or s.model, s.address, s.name, limiter=Limiter(s.per_minute),
+                             busy=() if rest else s.busy, note=note)
+        return model, (secret,)
+    names = ", ".join(services.all_services())
+    raise Stop(f"Choose a model: --model SERVICE[:MODEL] ({names}), or recorded:FILE. Next: agent key list")
 
 
+MODEL_HELP = "SERVICE or SERVICE:MODEL (default gemini; agent key list shows all), or recorded:FILE"
 IMAGE_HELP = "a Docker image on this computer (default: the project's Dockerfile, built after your yes)"
 
 
@@ -134,7 +146,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--files", action="append", default=[], help="files or folders/ it may change; default: all")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")
     p.add_argument("--image", default="", help=IMAGE_HELP)
-    p.add_argument("--model", default="gemini", help="gemini (default), gemini:MODEL, recorded:FILE or script:FILE")
+    p.add_argument("--model", default="gemini", help=MODEL_HELP)
     p.add_argument("--plain", action="store_true", help="no redrawn lines")
     p.add_argument("--details", action="store_true", help="a line for every step")
     return p

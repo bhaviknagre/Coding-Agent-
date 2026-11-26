@@ -177,7 +177,7 @@ def model_test(argv: Sequence[str]) -> int:
     from agent.screen import choose_model
 
     if len(argv) != 1:
-        print("usage: agent model-test gemini[:MODEL]")
+        print("usage: agent model-test SERVICE[:MODEL]   (agent key list shows the services)")
         return 2
     model, secrets = choose_model(argv[0])
     print(f"Testing {visible(model.name)} on the made-up shop project. Only made-up code is sent. About 1-3 minutes.")

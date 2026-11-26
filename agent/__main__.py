@@ -5,8 +5,8 @@ USAGE = """usage: agent [COMMAND]
   (nothing)         open the chat in this repository, like Claude Code
   doctor            check what is needed
   demo [--keep]     see it work on a made-up project, without a key (about 1 minute)
-  key set gemini    store your Gemini key in the macOS Keychain (typed, not shown)
-  model-test gemini try the real model on a made-up project; marks it TESTED or EXPERIMENTAL
+  key set SERVICE   store a key in the macOS Keychain (typed, not shown); agent key list: all services
+  model-test SERVICE try a real model on a made-up project; marks it TESTED or EXPERIMENTAL
   run "REQUEST"     let the agent change this repository on a new branch, then check it
   verify BRANCH     check a branch in fresh containers (no key needed)
   merge BRANCH      show how to merge; only you merge

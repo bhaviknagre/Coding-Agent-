@@ -23,8 +23,8 @@ CALL_SECONDS = 180  # for one whole reply, not only each piece of it
 CALLS_PER_MINUTE = 5  # until the account's own limits are known; the service's own answer always wins
 NEXT = {
     429: ". Next: wait a minute, or try tomorrow: the free tier allows only some requests a minute and a day."
-    " Or another model: --model gemini:gemini-3.5-flash-lite",
-    503: ". Next: try again in a few minutes, or --model gemini:gemini-3.5-flash-lite",
+    " Or another model: --model {service}:MODEL",
+    503: ". Next: try again in a few minutes, or another model: --model {service}:MODEL",
 }
 TRIES = 4  # the first and three more, only for "too many requests" and the service's own faults
 
@@ -94,9 +94,10 @@ class OpenAIFormat:
             except urllib.error.HTTPError as e:
                 text = self._said(e)
                 if e.code in (401, 403):
-                    raise ModelError(f"the key was refused ({e.code}). Next: agent key set gemini") from None
+                    raise ModelError(f"the key was refused ({e.code}). Next: agent key set {self.service}") from None
                 if e.code not in (429, 500, 502, 503, 504) or attempt == TRIES - 1:
-                    error = ModelError(f"the model service said {e.code}: {text}" + NEXT.get(e.code, ""))
+                    error = ModelError(f"the model service said {e.code}: {text}" + NEXT.get(e.code, "").format(
+                        service=self.service))
                     error.code = e.code
                     # Busy, or this model's free quota used up: another model has its own quota.
                     error.busy = e.code in (429, 500, 502, 503, 504)

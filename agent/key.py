@@ -73,10 +73,42 @@ def ask(provider: str) -> str:
     return key
 
 
+USAGE = """usage: agent key set|status|remove SERVICE      (SERVICE: {known}, or one you added)
+       agent key list
+       agent key add NAME --url https://HOST/PATH --model MODEL --company WHO [--per-minute N]
+                     (any service in the OpenAI format; then: agent key set NAME)"""
+
+
 def main(argv: list[str]) -> int:
-    """agent key set|status|remove gemini"""
-    if len(argv) != 2 or argv[0] not in ("set", "status", "remove") or argv[1] not in PROVIDERS:
-        print("usage: agent key set|status|remove " + "|".join(PROVIDERS))
+    """agent key set|status|remove SERVICE, agent key list, agent key add NAME ..."""
+    from agent import services
+
+    known = services.all_services()
+    usage = USAGE.format(known=", ".join(services.KNOWN))
+    if argv[:1] == ["list"] and len(argv) == 1:
+        for s in known.values():
+            stored = "key stored" if exists(s.name) else "no key"
+            print(f"{s.name:12} {stored:11} {s.model}  ({'tested' if s.tested else 'not tested yet'})")
+        return 0
+    if argv[:1] == ["add"]:
+        import argparse
+
+        p = argparse.ArgumentParser(prog="agent key add")
+        p.add_argument("name")
+        p.add_argument("--url", required=True)
+        p.add_argument("--model", required=True)
+        p.add_argument("--company", required=True, help="who runs the service: it receives your code")
+        p.add_argument("--per-minute", type=int, default=10)
+        a = p.parse_args(argv[1:])
+        try:
+            s = services.add(a.name, a.url, a.model, a.company, a.per_minute)
+        except ValueError as e:
+            print(f"Stopped: {e}")
+            return 2
+        print(f"Added {s.name} ({s.address}). No key is saved with it. Next: agent key set {s.name}")
+        return 0
+    if len(argv) != 2 or argv[0] not in ("set", "status", "remove") or argv[1] not in known:
+        print(usage)
         return 2
     action, provider = argv
     try:
@@ -95,5 +127,3 @@ def main(argv: list[str]) -> int:
         return 2
     return 0
 
-
-PROVIDERS = ("gemini",)
