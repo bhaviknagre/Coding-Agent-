@@ -151,8 +151,8 @@ def verify(argv: Sequence[str], repo: Path | None = None) -> int:
     try:
         log.add(run, "verify.started", base=start, result=result, contract=c.contract._asdict())
         print("Checking in fresh containers. This takes about a minute; Ctrl+C stops and cleans up.", flush=True)
-        c.check()
-        end = log.add(run, "verify.done", steps=[s._asdict() for s in c.steps])
+        verdict = c.check()
+        end = log.add(run, "verify.done", verdict=verdict, steps=[s._asdict() for s in c.steps])
         r = receipt.build(c, log_end=end)
     except KeyboardInterrupt:
         log.add(run, "verify.cancelled")

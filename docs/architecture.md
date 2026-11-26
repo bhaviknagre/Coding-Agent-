@@ -15,6 +15,7 @@
 | Independent checker and verdict | `agent/checker.py`, `receipt.py` | trusted; no model is asked |
 | Records | `agent/log.py` (SQLite, hash chain), `mask.py`, `scan.py` | trusted |
 | Key | `agent/key.py` (macOS Keychain) | trusted |
+| Dashboard: Grafana and Datasette on 127.0.0.1 | `agent/dashboard.py` | reads a copy of the log only |
 
 ## One request, step by step
 1. You type a request. The launcher shows the start screen once per chat: image, test command, files, proof, model.

@@ -77,6 +77,20 @@ Follow-ups remember the conversation and continue on the same branch. Each one m
 | `agent verify BRANCH --proof TEST` | check any branch, no model or key needed |
 | `agent merge BRANCH`, `agent discard BRANCH` | merge help, delete an agent branch |
 | `agent key status|remove gemini` | the key (never shown) |
+| `agent dashboard` | what the agent did, in your browser (below) |
+
+### The dashboard
+```
+agent dashboard
+```
+Opens **Grafana** at `http://127.0.0.1:3000`: tasks, verdicts, questions to you, tool calls, rule decisions (allow, ask,
+deny), model calls per hour, recent tasks and the raw log, and whether the log's hash chain is intact. **Datasette** at
+`http://127.0.0.1:8001/events` shows every table, searchable. Both are free and open source and run in Docker; the first
+start downloads about 1 GB. They read a copy of the log made every 5 seconds, so the log itself is never changed, and
+only this computer can open them. Ctrl+C stops them and removes their containers.
+
+Not used, on purpose: Prometheus (it collects from programs that run all the time; this one starts and stops),
+Redis (one user, no queue) and LangChain or LangSmith (a framework, and a cloud service that would receive your code).
 
 ## What the verdicts mean
 | Verdict | Meaning |
@@ -110,6 +124,8 @@ which reuses a pass for exactly the same files. GitHub runs it on every push.
 - **Not built in this version:** MCP, a web page, resuming a stopped task, installing packages for a project, building a
   project's own Dockerfile, memory between separate chats, held-back examples, other languages' test reports,
   native Windows, any model other than Gemini (the code reaches any OpenAI-format service, untested).
+- The dashboard's containers have the normal Docker network (a page needs a port); Grafana's update checks and news
+  are switched off.
 - Projects that need extra packages need a Docker image that already has them: `--image NAME`.
 - Two known cheats are not caught: answers hard-coded for the tests, and values that claim to equal everything.
 - Containers share your computer's kernel: this limits harm, it is not complete protection.

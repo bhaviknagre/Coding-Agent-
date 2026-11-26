@@ -10,7 +10,8 @@ USAGE = """usage: agent [COMMAND]
   run "REQUEST"     let the agent change this repository on a new branch, then check it
   verify BRANCH     check a branch in fresh containers (no key needed)
   merge BRANCH      show how to merge; only you merge
-  discard BRANCH    delete an agent branch, after asking"""
+  discard BRANCH    delete an agent branch, after asking
+  dashboard         see what the agent did, in Grafana and Datasette (on this computer only)"""
 
 
 def main() -> int:  # this file must stay readable for old Python versions
@@ -19,7 +20,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     import sqlite3
 
-    from agent import box, chat, demo, doctor, gitsafe, key, mask, screen, verify
+    from agent import box, chat, dashboard, demo, doctor, gitsafe, key, mask, screen, verify
 
     commands = {
         "": chat.main,
@@ -29,6 +30,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         "verify": verify.verify,
         "merge": verify.merge,
         "discard": verify.discard,
+        "dashboard": dashboard.main,
     }
     name, rest = (sys.argv[1:2] or [""])[0], sys.argv[2:]
     if name == "doctor" and not rest:
