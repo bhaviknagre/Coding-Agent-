@@ -34,6 +34,9 @@ def shorten():
 while True:
     shorten()
     reply = ask({"want": "model", "messages": messages})
+    if "user" in reply:  # the human's next request in the chat: the conversation goes on
+        messages.append({"role": "user", "content": reply["user"]})
+        continue
     message = reply["message"]
     messages.append(message)
     calls = message.get("tool_calls") or []

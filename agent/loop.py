@@ -45,6 +45,20 @@ class Outcome(NamedTuple):
     receipt: dict[str, Any] | None = None
 
 
+def short(args: object) -> str:
+    """The file or the program, for the line on the screen."""
+    if not isinstance(args, dict):
+        return ""
+    path = args.get("path")
+    if isinstance(path, str):
+        return path[:80]
+    program = args.get("program")
+    if isinstance(program, list) and program and all(isinstance(x, str) for x in program):
+        return " ".join(program)[:80]
+    text = args.get("text")
+    return text[:40] if isinstance(text, str) else ""
+
+
 class Repeats:
     """Notices when nothing new happens: one warning, then the end."""
 
@@ -77,13 +91,21 @@ class Task:
         self, repo: Path, contract: Contract, image: str, model: Model, human: Callable[[str], Answer], log: Log, *,
         base: str = "HEAD", limits: Limits | None = None, show: Callable[[str], None] = lambda text: None,
         secrets: tuple[str, ...] = (), cancel: threading.Event | None = None,
+        next_request: Callable[[Outcome], str | None] | None = None, say: Callable[[str], None] = lambda text: None,
+        branch: str = "", continue_from: str = "", open_question: Callable[[str], Answer] | None = None,
     ) -> None:
+        self.open_question = open_question
         self.repo, self.contract, self.image, self.model, self.log = repo, contract, image, model, log
         self.base = box.commit_id(repo, base)
         self.limits, self.show, self.secrets = limits or Limits(), show, secrets
         self.cancel = cancel or threading.Event()
         self.id = uuid4().hex[:12]
-        self.branch = f"agent/{self.id}"
+        self.branch = branch or f"agent/{self.id}"
+        # A chat: after each verdict, ask for the next request; None ends it.
+        self.next_request, self.say, self.pending = next_request, say, ""
+        # After a stop in a chat: begin from our own last commit on the branch, not from the base.
+        self.continue_from = continue_from
+        self.checked_from = self.base  # a follow-up is checked against the last verdict, not against the base
         self._human, self.waited = human, 0.0
         self.calls = self.tool_calls = self.tokens = self.malformed = self.empty = self.tries = self.logged = 0
         self.given: set[str] = set()  # the replies that the model really gave
@@ -99,10 +121,13 @@ class Task:
         self.log.add(self.id, kind, **body)
 
     def human(self, question: str) -> Answer:
+        return self._waiting(self._human, question)
+
+    def _waiting(self, ask: Callable[[str], Answer], question: str) -> Answer:
         self.show("NEEDS YOU")
         start = time.monotonic()
         try:
-            return self._human(question)
+            return ask(question)
         finally:
             self.waited += time.monotonic() - start
 
@@ -144,16 +169,21 @@ class Task:
         return outcome
 
     def _work(self) -> Outcome:
-        entries, self.left_out = box.list_commit(self.repo, self.base)
+        entries, self.left_out = box.list_commit(self.repo, self.continue_from or self.base)
         with box.Box(self.image, cancel=self.cancel) as b:
             b.copy_entries(self.repo, entries)
-            oids = {e.name: e.oid for e in entries}
+            # What the human has seen begins at the developer's own commit, also when work goes on from ours.
+            oids = {e.name: e.oid for e in box.list_commit(self.repo, self.base)[0]}
 
             def base_hash(path: str) -> str:
                 data = box.git_bytes(self.repo, "cat-file", "blob", oids[path]) if path in oids else b""
                 return hashlib.sha256(data).hexdigest() if path in oids else ""
 
-            tools = Toolbox(b, self.contract, self.human, self.record, self.secrets, base_hash)
+            ask = None
+            if self.open_question is not None:
+                open_question = self.open_question
+                ask = lambda q: self._waiting(open_question, q)  # noqa: E731
+            tools = Toolbox(b, self.contract, self.human, self.record, self.secrets, base_hash, ask)
             try:
                 with box.Session(b, WORKER, write=False) as worker:
                     return self._talk(b, entries, tools, worker)
@@ -170,16 +200,29 @@ class Task:
         while True:
             want = worker.ask(answer)
             kind = want.get("want")
-            if kind == "model":
+            if kind == "model" and self.pending:
+                answer, self.pending = {"user": mask(self.pending, self.secrets)}, ""
+            elif kind == "tool" and self.pending:
+                # Calls that were in the same reply as finish: the model has not seen the new request yet.
+                answer = {"status": "SKIPPED", "text": "the human has a new request; it comes next"}
+            elif kind == "model":
                 answer = {"message": self._model(want.get("messages"))}
             elif kind == "tool":
                 answer = self._tool(tools, want)
                 if tools.finished:
                     tools.finished = False
                     outcome, feedback = self._check(b, entries, tools)
-                    if outcome:
+                    if outcome and self.next_request:
+                        self.record("request.ended", state=outcome.state, commit=outcome.commit)
+                        more = self.next_request(outcome)
+                        if more is None:
+                            return outcome
+                        self._again(more)
+                        answer = {"status": "OK", "text": f"The independent check said: {outcome.state}."}
+                    elif outcome:
                         return outcome
-                    answer = {"status": "FAILED", "text": feedback}
+                    else:
+                        answer = {"status": "FAILED", "text": feedback}
             elif kind == "malformed":
                 self.malformed += 1
                 if self.malformed >= self.limits.malformed:
@@ -190,6 +233,15 @@ class Task:
             else:
                 raise Stopped("the agent asked for something that does not exist")
 
+    def _again(self, request: str) -> None:
+        """A follow-up in the chat: the same conversation and branch, fresh limits, and the requests so far."""
+        self.pending = request
+        self.checked_from = self.commit or self.checked_from
+        self.contract = self.contract._replace(what=f"{self.contract.what}; then: {request}"[-2000:])
+        self.calls = self.tool_calls = self.tokens = self.malformed = self.empty = self.tries = 0
+        self.started, self.waited = time.monotonic(), 0.0
+        self.repeats = Repeats()
+
     def _model(self, messages: object) -> Message:
         if not isinstance(messages, list) or len(json.dumps(messages)) > MAX_REQUEST:
             raise Stopped("the conversation is too long, or not a conversation")
@@ -197,7 +249,7 @@ class Task:
         for _ in range(self.limits.cut + 1):
             self.check_model_limits()
             self.calls += 1
-            self.show(f"thinking ({self.calls})")
+            self.show("thinking")
             self.record("model.asked", number=self.calls, model=self.model.name, messages=len(safe))
             reply: Reply = self.model.call(safe, tool_list())
             message = check_reply(reply.message)
@@ -205,6 +257,8 @@ class Task:
             self.record("model.replied", number=self.calls, tokens=reply.tokens, cut=reply.cut, message=message)
             if not reply.cut:
                 self.given.add(json.dumps(message, sort_keys=True))
+                if isinstance(message.get("content"), str) and message["content"].strip():
+                    self.say(mask(message["content"], self.secrets))
                 return message
         raise ModelError("the model's reply was cut off each time, so nothing in it was run")
 
@@ -246,12 +300,15 @@ class Task:
         name = tool if isinstance(tool, str) and tool in TOOLS else "an unknown tool"
         args: Any = want.get("args")
         action = Action(tool, args)
-        self.show(name)
+        self.show(name + (f" {short(args)}" if name in TOOLS else ""))
         r: Result = tools.call(action, want.get("reason", ""))
         self.malformed = 0
         if r.status in ("DENIED", "REJECTED"):
             self.refused.append(f"{name}: {r.text[:100]}")
         if name == "finish":
+            summary = args.get("summary") if isinstance(args, dict) else ""
+            if isinstance(summary, str) and summary.strip():
+                self.say(mask(summary, self.secrets))
             return {"status": r.status, "text": r.text}
         call = hashlib.sha256(repr(action).encode("utf-8", "replace")).hexdigest()
         result = hashlib.sha256(f"{r.status}\0{r.text}".encode("utf-8", "replace")).hexdigest()
@@ -275,7 +332,7 @@ class Task:
             self.commit = gitsafe.commit(
                 self.repo, self.base, self.branch, found.files,
                 "agent: " + mask(self.contract.what, self.secrets)[:72],
-                secrets=self.secrets, replace=self.commit,
+                parent=self.continue_from, secrets=self.secrets, replace=self.commit,
             )
         except gitsafe.Refused as e:
             self.record("result.refused", reason=str(e))
@@ -285,7 +342,8 @@ class Task:
         self.record("result.committed", branch=self.branch, commit=self.commit, not_taken=found.not_taken)
         approved = self._approved(tools, found.files)
         c = self.checker = Checker(
-            self.repo, self.base, self.commit, self.contract._replace(approved=approved), self.image, self.cancel
+            self.repo, self.checked_from, self.commit, self.contract._replace(approved=approved), self.image,
+            self.cancel,
         )
         verdict = c.check()
         self.record("check.ended", verdict=verdict, steps=[s._asdict() for s in c.steps])

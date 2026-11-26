@@ -102,6 +102,20 @@ def draw(
     return "\n".join(out)
 
 
+def ask_open(question: str) -> Answer:
+    """An open question from the agent: any text is the answer."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return NO
+    print(question)
+    print("Type your answer, then Enter (nothing = no answer): ", end="", flush=True)
+    termios.tcdrain(sys.stdout.fileno())
+    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    answer = sys.stdin.readline()
+    if not answer:
+        return NO
+    return Answer(bool(answer.strip()), reason=answer.strip()[:2000])
+
+
 def ask_human(question: str) -> Answer:
     """Only a person at a terminal can answer. Keys typed before the question do not count; silence waits."""
     if not (sys.stdin.isatty() and sys.stdout.isatty()):

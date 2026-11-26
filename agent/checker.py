@@ -262,7 +262,20 @@ class Checker:
         if gone:
             self.step("test count", UNCLEAR, f"{len(gone)} test(s) no longer reported: " + ", ".join(gone[:5]))
         self.regressions(before, after)
+        if not self.contract.proof:
+            self.contract = self.contract._replace(proof=self.approved_tests(before, after))
         self.proof(after)
+
+    def approved_tests(self, before: dict[str, str], after: list[dict[str, str]]) -> tuple[str, ...]:
+        """New tests, in test files whose new content the human saw and allowed. Each must still fail without the
+        change. Old tests in those files are not proof: they could have been weakened."""
+        files = {n for n, oid in self.contract.approved.items() if oid and n.endswith(".py") and PROTECTED.search(n)}
+        found = set()
+        for name in set().union(*after):
+            path = name.split("::")[0] if "::" in name else "/".join(name.split(".")[:-2]) + ".py"
+            if path in files and name not in before:
+                found.add(name)
+        return tuple(sorted(found))
 
     def canary(self, found: list[dict[str, str]]) -> None:
         if not all(found):
@@ -301,7 +314,7 @@ class Checker:
     def proof(self, after: list[dict[str, str]]) -> None:
         proof = self.contract.proof
         if not proof:
-            self.step("proof", UNCLEAR, "no test was agreed that shows the change works")
+            self.step("proof", UNCLEAR, "no test was agreed, and no new test was approved, that shows the change works")
             return
         results = {t: {x.get(t) for x in after} for t in proof}
         if bad := [t for t in proof if results[t] <= {"fail", "error"}]:

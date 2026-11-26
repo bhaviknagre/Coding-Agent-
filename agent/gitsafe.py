@@ -326,6 +326,19 @@ def commit(
     return new
 
 
+def move_back(repo: Path, branch: str, to: str) -> None:
+    """Put an agent branch back on an earlier commit of ours, or delete it when there is none."""
+    git = Git(repo)
+    ref = git.check_branch(branch)
+    tip = git("rev-parse", "-q", "--verify", "--end-of-options", ref, ok=False)
+    if not tip or tip == to:
+        return
+    if to:
+        git("update-ref", "--no-deref", ref, to, tip)
+    else:
+        git("update-ref", "--no-deref", "-d", ref, tip)
+
+
 def discard(repo: Path, branch: str) -> str:
     """Delete one agent branch and return the commit it pointed to, so that it can be brought back."""
     git = Git(repo)

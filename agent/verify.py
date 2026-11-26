@@ -108,9 +108,9 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def verify(argv: Sequence[str]) -> int:
+def verify(argv: Sequence[str], repo: Path | None = None) -> int:
     a = parser().parse_args(argv)
-    repo = repository()
+    repo = repo or repository()
     start, result = find_base(repo, a.branch, a.base)
     changed = changes(repo, start, result)
     command = tuple(shlex.split(a.command))
@@ -165,12 +165,12 @@ def verify(argv: Sequence[str]) -> int:
     return {"VERIFIED": 0, "FAILED": 1}.get(r["verdict"], 2)
 
 
-def merge(argv: Sequence[str]) -> int:
+def merge(argv: Sequence[str], repo: Path | None = None) -> int:
     """Show how to merge. Only the developer merges."""
     p = argparse.ArgumentParser(prog="agent merge")
     p.add_argument("branch")
     branch = p.parse_args(argv).branch
-    repo = repository()
+    repo = repo or repository()
     start, result = find_base(repo, branch, "")
     names = [c for c in changes(repo, start, result) if c.new_mode != "000000"]
     notes = [f"{c.path}: {what}" for c in names for what in (

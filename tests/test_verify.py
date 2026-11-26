@@ -358,7 +358,7 @@ class Command(Case):
         for args, word in (
             (("verify", "none"), "no branch"), (("verify", "main"), "no change"), (("verify", "--base=--x", "good"), "Stopped"),  # noqa: E501
             (("verify", "good", "--image", "no-such:1"), "No such image"), (("verify", "good", "--command", ""), "empty"),  # noqa: E501
-            (("what",), "usage"), ((), "usage"), (("merge", "good"), "git merge --no-ff " + git(self.repo, "rev-parse", "good")),  # noqa: E501
+            (("what",), "usage"), ((), "terminal"), (("merge", "good"), "git merge --no-ff " + git(self.repo, "rev-parse", "good")),  # noqa: E501
         ):
             code, text = self.run_agent(*args)
             self.assertIn(word, text, args)

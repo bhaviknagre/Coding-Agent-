@@ -125,7 +125,7 @@ class Run(unittest.TestCase):
         (self.repo / "calc.py").write_text("my unfinished work")
         text = self.agent("fix add", "--model", f"script:{self.script}", answers=("n\n",))[1]
         self.assertIn("uncommitted changes", text)
-        self.assertIn("none agreed: then the result cannot be VERIFIED", text)
+        self.assertIn("none named: a new test that you approve becomes the proof", text)
 
     def test_plain_and_live_lines(self):
         args = ("fix add", "--proof", "test_calc.T.test_proof", "--model", f"script:{self.script}")

@@ -1,7 +1,8 @@
 """Command line: agent doctor, verify, merge, discard."""
 import sys
 
-USAGE = """usage: agent COMMAND
+USAGE = """usage: agent [COMMAND]
+  (nothing)         open the chat in this repository, like Claude Code
   doctor            check what is needed
   demo [--keep]     see it work on a made-up project, without a key (about 1 minute)
   key set gemini    store your Gemini key in the macOS Keychain (typed, not shown)
@@ -18,9 +19,10 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     import sqlite3
 
-    from agent import box, demo, doctor, gitsafe, key, mask, screen, verify
+    from agent import box, chat, demo, doctor, gitsafe, key, mask, screen, verify
 
     commands = {
+        "": chat.main,
         "demo": demo.demo,
         "model-test": demo.model_test,
         "run": screen.run,
@@ -33,12 +35,17 @@ def main() -> int:  # this file must stay readable for old Python versions
         return doctor.main()
     if name == "key":
         return key.main(rest)
+    if name in ("-h", "--help", "help"):
+        print(USAGE)
+        return 0
+    if name.startswith("-"):  # options of the chat, such as --model
+        name, rest = "", sys.argv[1:]
     if name not in commands:
         print(USAGE)
         return 2
     box.signals_stop_cleanly()
     try:
-        if name in ("run", "verify", "demo", "model-test"):
+        if name in ("", "run", "verify", "demo", "model-test"):
             box.clean_leftovers()
         return commands[name](rest)
     except (verify.Stop, box.BoxError, gitsafe.Refused, ValueError, OSError, sqlite3.Error) as e:

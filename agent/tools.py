@@ -168,7 +168,9 @@ class Toolbox:
     def __init__(
         self, b: box.Box, contract: Contract, human: Human, record: Record = lambda *a, **k: None,
         secrets: tuple[str, ...] = (), base_hash: Callable[[str], str] = lambda path: "",
+        open_question: Human | None = None,
     ) -> None:
+        self.open_question = open_question or human
         self.base_hash = base_hash  # what a file was when the task began, from the launcher's own list; "" if none
         self.box, self.policy, self.human, self.record, self.secrets = b, Policy(contract), human, record, secrets
         self.contract = contract
@@ -272,7 +274,7 @@ class Toolbox:
         if action.tool == "ask":
             text = mask(a["question"], self.secrets)[:1000]
             words = approve.rows(text, "THE AGENT ASKS (its words): ", approve.screen_width())
-            answer = self.human("\n".join(["", *words]))
+            answer = self.open_question("\n".join(["", *words]))
             return Result("OK", answer.reason or ("yes" if answer.yes else "the human gave no answer"))
         self.finished = True
         return Result("OK", "the checks start now")

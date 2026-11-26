@@ -87,7 +87,7 @@ def start_screen(contract: Contract, image: str, model: Model, same_as_before: b
     add = rows.extend
     add(approve.rows(contract.what, "Request   ", width))
     add(approve.rows(", ".join(contract.where), "Files     ", width))
-    proof = ", ".join(contract.proof) or "none agreed: then the result cannot be VERIFIED"
+    proof = ", ".join(contract.proof) or "none named: a new test that you approve becomes the proof"
     add(approve.rows(proof, "Proof     ", width))
     if same_as_before:
         add(approve.rows("image, test command and model service as last time", "Setup     ", width))
@@ -95,7 +95,7 @@ def start_screen(contract: Contract, image: str, model: Model, same_as_before: b
         add(approve.rows(f"{image}  (no network; your folder is not mounted)", "Image     ", width))
         add(approve.rows(" ".join(contract.command), "Tests     ", width))
         add(approve.rows(provider_notice(model), "Model     ", width))
-    add(approve.rows("tests, settings, dependencies, other files and every command ask you first", "Asks      ", width))
+    add(approve.rows("you, before tests, settings, dependencies, other files, commands", "Asks      ", width))
     return "\n".join(rows)
 
 
