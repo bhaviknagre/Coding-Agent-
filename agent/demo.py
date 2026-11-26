@@ -145,7 +145,7 @@ def keep(repo: Path) -> None:
             print("\n     A container with the fixed project is running, as the agent's commands run: no network,")
             print("     read-only, no keys, not your folder. Look inside from another terminal:")
             print(f"       docker exec -it {name} sh")
-            print("     Try: ls; cat shop.py; touch x; ping example.com")
+            print("     Try: ls; cat shop.py; touch x (refused: read-only); exit")
             input("     Press Enter here when you are done; it is then removed. ")
         finally:
             box.docker("rm", "-f", "-v", name, ok=False)
