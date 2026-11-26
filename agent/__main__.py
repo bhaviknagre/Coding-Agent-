@@ -3,6 +3,7 @@ import sys
 
 USAGE = """usage: agent COMMAND
   doctor            check what is needed
+  run "REQUEST"     let the agent change this repository on a new branch, then check it
   verify BRANCH     check a branch in fresh containers (no key needed)
   merge BRANCH      show how to merge; only you merge
   discard BRANCH    delete an agent branch, after asking"""
@@ -14,9 +15,9 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     import sqlite3
 
-    from agent import box, doctor, gitsafe, mask, verify
+    from agent import box, doctor, gitsafe, mask, screen, verify
 
-    commands = {"verify": verify.verify, "merge": verify.merge, "discard": verify.discard}
+    commands = {"run": screen.run, "verify": verify.verify, "merge": verify.merge, "discard": verify.discard}
     name, rest = (sys.argv[1:2] or [""])[0], sys.argv[2:]
     if name == "doctor" and not rest:
         return doctor.main()
@@ -25,7 +26,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     box.signals_stop_cleanly()
     try:
-        if name == "verify":
+        if name in ("run", "verify"):
             box.clean_leftovers()
         return commands[name](rest)
     except (verify.Stop, box.BoxError, gitsafe.Refused, ValueError, OSError, sqlite3.Error) as e:
