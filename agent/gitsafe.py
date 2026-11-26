@@ -288,9 +288,11 @@ class Git:
 
 
 def commit(
-    repo: Path, base: str, branch: str, files: list[File], message: str, parent: str = "", secrets: tuple[str, ...] = ()
+    repo: Path, base: str, branch: str, files: list[File], message: str, parent: str = "",
+    secrets: tuple[str, ...] = (), replace: str = "",
 ) -> str:
-    """Make one commit and create the branch, or move it on from `parent`, our own last commit on it."""
+    """Make one commit and create the branch, or move it on from `parent`, our own last commit on it. With `replace`,
+    the commit starts again from the base and takes the place of that earlier one of ours."""
     git = Git(repo)
     ref = git.check_branch(branch)
     base = box.commit_id(repo, base)
@@ -320,7 +322,7 @@ def commit(
     if tree == git("rev-parse", f"{start}^{{tree}}"):
         raise Refused("there is no change")
     new = git("commit-tree", tree, "-p", start, data=mask(message, secrets).encode("utf-8", "replace"))
-    git("update-ref", "--no-deref", ref, new, parent or null)  # only if it is still what we expect
+    git("update-ref", "--no-deref", ref, new, replace or parent or null)  # only if it is still what we expect
     return new
 
 

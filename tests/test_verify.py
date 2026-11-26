@@ -3,6 +3,7 @@ import io
 import os
 import pty
 import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -252,9 +253,12 @@ class Command(Case):
                 if not piece:
                     break
                 text += piece
-            if not sent and b"for no: " in text:
+            if not sent and b"Enter: " in text:
+                time.sleep(0.5)  # keys typed before the whole question is there are thrown away
                 os.write(fd, answer.encode())
                 sent = True
+        else:
+            os.kill(pid, signal.SIGKILL)  # never wait for ever
         code = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
         os.close(fd)
         return code, text.decode("utf-8", "replace").replace("\r\n", "\n")

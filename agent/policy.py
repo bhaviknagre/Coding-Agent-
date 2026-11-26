@@ -19,6 +19,7 @@ TOOLS: dict[str, dict[str, type]] = {
 }
 CHANGES = ("edit", "create", "delete")
 MAX_TEXT = 200_000
+SHORT = {"text": 1000, "question": 2000, "summary": 5000}  # for all tools but create
 DEPENDENCIES = re.compile(
     r"""(?ix)(^|/)(
         requirements([^/]*|/[^/]*)\.(txt|in) | constraints[^/]*\.txt | pipfile(\.lock)? | poetry\.lock | uv\.lock
@@ -85,6 +86,8 @@ class Policy:
         texts = [v for v in a.args.values() if isinstance(v, str)]
         if any(len(v) > MAX_TEXT for v in texts) or not all(map(_plain, texts)):
             return "the text is too long, or is not valid text"
+        if a.tool != "create" and any(len(a.args[k]) > n for k, n in SHORT.items() if k in a.args):
+            return "the text is too long"
         if a.tool == "read" and not 1 <= a.args["first"] <= 10_000_000:
             return "first is the number of the first line, from 1"
         if a.tool == "run_command":

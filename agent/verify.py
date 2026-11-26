@@ -5,12 +5,12 @@ import os
 import re
 import shlex
 import sys
-import termios
 from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
 
 from agent import box, gitsafe, receipt
+from agent.approve import ask_human
 from agent.checker import Change, Checker, Contract, changes, test_tool
 from agent.log import Log, _masked
 from agent.mask import mask
@@ -39,12 +39,7 @@ def confirm(question: str) -> bool:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(f"{question} Not asked: no person at a terminal, so the answer is no.")
         return False
-    sys.stdout.flush()
-    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
-    try:
-        return input(f"{question} Type y and Enter for yes, anything else for no: ").strip() in ("y", "Y")
-    except EOFError:
-        return False
+    return ask_human(question).yes
 
 
 def repository() -> Path:

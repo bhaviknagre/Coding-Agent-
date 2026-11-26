@@ -53,13 +53,17 @@ def rows(text: str, mark: str, width: int) -> list[str]:
     return out
 
 
+def screen_width() -> int:
+    return max(40, min(shutil.get_terminal_size().columns, 120))
+
+
 def draw(
     action: Action, decision: Decision, reason: str, shown_files: dict[str, str | None], secrets: tuple[str, ...] = (),
     width: int = 0,
 ) -> str | None:
     """The whole question, or None if it cannot be shown completely. `shown_files`: content, or None if unreadable."""
     a = action.args
-    width = max(40, min(width or shutil.get_terminal_size().columns, 120))
+    width = width or screen_width()
     bar = "=" * (width - 1)
     title = "THE AGENT ASKS TO " + {
         "edit": "CHANGE A FILE", "create": "MAKE A FILE", "delete": "DELETE A FILE", "run_command": "RUN A COMMAND",

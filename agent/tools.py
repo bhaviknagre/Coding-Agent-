@@ -167,14 +167,18 @@ class Toolbox:
 
     def __init__(
         self, b: box.Box, contract: Contract, human: Human, record: Record = lambda *a, **k: None,
-        secrets: tuple[str, ...] = (),
+        secrets: tuple[str, ...] = (), base_hash: Callable[[str], str] = lambda path: "",
     ) -> None:
+        self.base_hash = base_hash  # what a file was when the task began, from the launcher's own list; "" if none
         self.box, self.policy, self.human, self.record, self.secrets = b, Policy(contract), human, record, secrets
         self.contract = contract
         self.files = box.Session(b, FILES)
         self.read_hash: dict[str, str] = {}  # what the agent last saw of each file
         self.edited: set[str] = set()
-        self.finished = ""
+        # file -> its hash, when the human saw and allowed every change from the start on; "" when it was deleted
+        self.approved: dict[str, str] = {}
+        self.asked = False
+        self.finished = False
 
     def close(self) -> None:
         self.files.close()
@@ -204,6 +208,7 @@ class Toolbox:
         return result
 
     def _decided(self, action: Action, decision: Decision, reason: str) -> Result:
+        self.asked = decision.kind == ASK
         try:
             if decision.kind == ASK:
                 refused = self._approve(action, decision, reason)
@@ -216,6 +221,8 @@ class Toolbox:
     def _approve(self, action: Action, decision: Decision, reason: str) -> Result | None:
         shown, state = self._shown(action)
         bound = (action.hash(), state)
+        if action.tool == "create" and self.base_hash(action.args["path"]):
+            decision = decision._replace(rule=decision.rule + "; it REPLACES a file that the project had at the start")
         question = approve.draw(action, decision, reason, shown, self.secrets)
         if question is None:
             return Result("REJECTED", "this cannot be shown completely to the human; make it smaller or simpler")
@@ -264,9 +271,10 @@ class Toolbox:
             return self._run(list(self.contract.command))
         if action.tool == "ask":
             text = mask(a["question"], self.secrets)[:1000]
-            answer = self.human("\n".join(["", *approve.rows(text, "THE AGENT ASKS (its words): ", 100)]))
+            words = approve.rows(text, "THE AGENT ASKS (its words): ", approve.screen_width())
+            answer = self.human("\n".join(["", *words]))
             return Result("OK", answer.reason or ("yes" if answer.yes else "the human gave no answer"))
-        self.finished = a["summary"]
+        self.finished = True
         return Result("OK", "the checks start now")
 
     def _run(self, program: list[str]) -> Result:
@@ -301,15 +309,24 @@ class Toolbox:
             self.read_hash[path] = x["hash"]
             return self._page(mask(x["text"], self.secrets), a["first"])
         if tool == "delete":
-            self.read_hash.pop(path)
+            self._chain(path, self.read_hash.pop(path), "")
             self.policy.created.discard(path)
             self.edited.add(path)
             return Result("OK", "deleted")
+        self._chain(path, "" if tool == "create" else self.read_hash.get(path, "?"), x["hash"])
         self.read_hash[path] = x["hash"]
         self.edited.add(path)
         if tool == "create":
             self.policy.created.add(path)
         return Result("OK", "done")
+
+    def _chain(self, path: str, before: str, after: str) -> None:
+        """Remember that the human has seen all of it: each allowed change must begin where the last one ended. A
+        command can change or delete a file in between; then the chain is broken."""
+        if self.asked and before == self.approved.get(path, self.base_hash(path)):
+            self.approved[path] = after
+        else:
+            self.approved[path] = "broken"
 
     def _page(self, text: str, first: int) -> Result:
         rows = text.split("\n")

@@ -44,7 +44,7 @@ class Contract(NamedTuple):
     where: tuple[str, ...]
     command: tuple[str, ...]
     proof: tuple[str, ...] = ()  # test names; for other commands: a proof command, or empty for the command itself
-    approved: dict[str, str] = {}  # noqa: RUF012 - never changed; protected file -> exact content id
+    approved: dict[str, str] = {}  # noqa: RUF012 - never changed; file -> exact content id, or "" for deleted
 
 
 class Step(NamedTuple):
@@ -96,7 +96,7 @@ def allowed(path: str, where: tuple[str, ...]) -> bool:
 
 
 def same_content(approved: dict[str, str], path: str, oid: str, mode: str) -> bool:
-    return approved.get(path) == oid and mode in ("100644", "100755")
+    return approved.get(path) == oid and mode in ("100644", "100755") or (approved.get(path) == "" and mode == "000000")
 
 
 def failed_without(tests: dict[str, str], name: str) -> bool:
@@ -174,11 +174,13 @@ class Checker:
         # pure: the base. without: the base plus approved tests. with_change: the result, but protected files come
         # from the base unless approved. All are read from the developer's own repository.
         self.pure = base
-        self.without = list({**old, **approved}.values())
+        deleted = {n for n in old if n not in new and self.contract.approved.get(n) == ""}
+        self.without = list({**old, **{n: e for n, e in approved.items() if n in protected}}.values())
         kept = {n: e for n, e in new.items() if n not in protected}
-        safe = {n: e for n, e in old.items() if n in protected}
+        safe = {n: e for n, e in old.items() if n in protected and n not in deleted}
         self.with_change = list({**kept, **safe, **approved}.values())
-        self.restored = sorted(n for n in protected if n not in approved and old.get(n) != new.get(n))
+        known = approved.keys() | deleted
+        self.restored = sorted(n for n in protected if n not in known and old.get(n) != new.get(n))
         box.refuse_conflicts(self.with_change)
 
     def helpers(self) -> set[str]:

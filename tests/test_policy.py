@@ -398,4 +398,4 @@ class Tools(unittest.TestCase):
         self.assertEqual(self.call("ask", question="which?\x1b[2J").text, "use plus")
         self.assertIn("(its words): which?<U+001B>", self.asked[0])
         self.call("finish", summary="done")
-        self.assertEqual(self.t.finished, "done")
+        self.assertIs(self.t.finished, True)

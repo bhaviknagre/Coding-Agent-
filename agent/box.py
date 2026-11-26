@@ -513,7 +513,7 @@ class Session:
             docker("rm", "-f", "-v", self.name[1], ok=False)
             raise
         self.closed = False
-        self.answers: queue.Queue[bytes] = queue.Queue()
+        self.answers: queue.Queue[bytes] = queue.Queue(2)  # more waits in the container, not in our memory
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
@@ -521,8 +521,11 @@ class Session:
         assert self.process.stdout  # noqa: S101 - for the type checker
         while True:
             line = self.process.stdout.readline(self.LINE)
-            self.answers.put(line)
-            if not line.endswith(b"\n"):  # ended, or far too long
+            while not self.closed:
+                with contextlib.suppress(queue.Full):
+                    self.answers.put(line, timeout=0.5)
+                    break
+            if self.closed or not line.endswith(b"\n"):  # ended, or far too long
                 return
 
     def ask(self, question: dict[str, Any], timeout: float = 30) -> dict[str, Any]:
@@ -538,7 +541,7 @@ class Session:
             return answer
         except BaseException as e:
             self.close()  # after a late or missing answer, nothing that follows could be matched to its question
-            if isinstance(e, ValueError | queue.Empty):
+            if isinstance(e, ValueError | queue.Empty | RecursionError):
                 raise BoxError("the file helper gave no clear answer") from e
             raise
 
