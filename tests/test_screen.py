@@ -45,6 +45,7 @@ class Run(unittest.TestCase):
     def agent(self, *args, answers=("y\n",), terminal=True):
         """Run it as a person would, in a terminal. Returns exit code, text, and how many questions were asked."""
         env = {**os.environ, "HOME": str(self.home), "XDG_DATA_HOME": str(self.home / "data"), "PYTHONPATH": str(ROOT)}
+        env["CODING_AGENT_KEYCHAIN"] = "/nonexistent/test.keychain"
         env["DOCKER_HOST"] = box.docker("context", "inspect", "-f", "{{.Endpoints.docker.Host}}")
         command = [sys.executable, "-m", "agent", "run", *args]
         if not terminal:
@@ -112,7 +113,7 @@ class Run(unittest.TestCase):
         self.assertEqual(git(self.repo, "branch", "--list", "agent/*"), "")
 
     def test_clear_stops(self):
-        for args, words in (((), "usage"), (("x",), "No model service"), (("x", "--model", "script:" + str(self.script),
+        for args, words in (((), "usage"), (("x",), "No Gemini key is stored"), (("x", "--model", "script:" + str(self.script),  # noqa: E501
                             "--image", "no-such:1"), "No such image")):
             code, text, asked = self.agent(*args)
             self.assertIn(words, text, args)

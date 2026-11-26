@@ -1,4 +1,5 @@
 """Check what the agent needs. Every problem comes with one next step. No secret is ever read."""
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 KEY_ITEM = "coding-agent-v2"
+KEY_ACCOUNT = "gemini"
 NEED_FREE_GB = 8
 
 
@@ -71,10 +73,11 @@ def key() -> Result:
     """Ask the Keychain whether an item exists. Without -w or -g it never returns the secret."""
     if sys.platform != "darwin":
         return Result("WARN", "Key", "key store not supported here yet", "Type the key when asked.")
-    code, _ = run("security", "find-generic-password", "-s", KEY_ITEM)
+    chain = [os.environ["CODING_AGENT_KEYCHAIN"]] if os.environ.get("CODING_AGENT_KEYCHAIN") else []
+    code, _ = run("security", "find-generic-password", "-s", KEY_ITEM, "-a", KEY_ACCOUNT, *chain)
     if code == 0:
-        return Result("OK", "Key", "stored in the Keychain")
-    return Result("WARN", "Key", "none stored", "Only needed for a live model; verify and demo work without it.")
+        return Result("OK", "Key", "Gemini key stored in the Keychain")
+    return Result("WARN", "Key", "none stored", "For the live model: agent key set gemini. Demo, verify need none.")
 
 
 def check_all() -> list[Result]:

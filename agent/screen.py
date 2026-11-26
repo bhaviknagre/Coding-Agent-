@@ -8,13 +8,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent import approve, box
+from agent import approve, box, key
 from agent.approve import Answer, ask_human
 from agent.checker import Contract, test_tool
 from agent.log import Log
 from agent.loop import Outcome, Task
 from agent.model import FakeModel, Model, Replay
 from agent.policy import DEPENDENCIES
+from agent.provider import GEMINI_MODEL, OpenAIFormat
 from agent.verify import Stop, data_folder, repository, visible
 
 SETUP = ("Dockerfile", "devcontainer.json")  # files that decide what the image is
@@ -77,7 +78,8 @@ def remembered(repo: Path) -> Path:
 def provider_notice(model: Model) -> str:
     if model.name in ("fake", "recorded"):
         return "none: a script or a recording answers; no code leaves this computer"
-    return f"{model.name}: your request and the code the agent reads are sent there. Free services may keep and read it"
+    return (f"{model.name}: your request and the code the agent reads are sent to Google. On the free tier Google may "
+            "use it to improve its products, and people may read it: do not use it for private code")
 
 
 def start_screen(contract: Contract, image: str, model: Model, same_as_before: bool, width: int) -> str:
@@ -103,14 +105,22 @@ def choose_command(repo: Path) -> tuple[str, ...]:
     return ("python", "-m", "pytest") if uses_pytest else ("python", "-m", "unittest")
 
 
-def choose_model(name: str) -> Model:
-    """R1 has no live model yet: a script (for tests and demos) or a recording."""
-    kind, _, path = name.partition(":")
-    if kind == "script" and path:
-        return FakeModel(json.loads(Path(path).read_text()))
-    if kind == "recorded" and path:
-        return Replay(Path(path))
-    raise Stop("No model service is set up yet. Next: use --model recorded:FILE, or wait for the live model (T-10).")
+def choose_model(name: str) -> tuple[Model, tuple[str, ...]]:
+    """The model, and the secrets to mask: a script or recording for tests and demos, or Gemini with your key."""
+    kind, _, rest = name.partition(":")
+    if kind == "script" and rest:
+        return FakeModel(json.loads(Path(rest).read_text())), ()
+    if kind == "recorded" and rest:
+        return Replay(Path(rest)), ()
+    if kind == "gemini":
+        try:
+            secret = key.load("gemini") or (key.ask("gemini") if sys.platform != "darwin" else "")
+        except (key.KeyError_, EOFError, KeyboardInterrupt) as e:
+            raise Stop(f"No key: {e}") from None
+        if not secret:
+            raise Stop("No Gemini key is stored. Next: agent key set gemini")
+        return OpenAIFormat(secret, rest or GEMINI_MODEL), (secret,)
+    raise Stop("Choose a model: --model gemini, or --model recorded:FILE. Next: agent key set gemini")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -120,7 +130,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--files", action="append", default=[], help="files or folders/ it may change; default: all")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")
     p.add_argument("--image", default=box.HELPER_IMAGE, help="a Docker image that is already on this computer")
-    p.add_argument("--model", default="", help="recorded:FILE or script:FILE")
+    p.add_argument("--model", default="gemini", help="gemini (default), gemini:MODEL, recorded:FILE or script:FILE")
     p.add_argument("--plain", action="store_true", help="no redrawn lines")
     p.add_argument("--details", action="store_true", help="a line for every step")
     return p
@@ -136,7 +146,7 @@ def run(argv: Sequence[str]) -> int:
         raise Stop("For this command, give one --proof: a command that fails before and works after.")
     proof = tuple(a.proof) if test_tool(command)[0] != "command" else tuple(shlex.split(" ".join(a.proof)))
     contract = Contract(" ".join(a.request.split()), tuple(a.files) or ("*",), command, proof)
-    model = choose_model(a.model)
+    model, secrets = choose_model(a.model)
     box.image_id(a.image)  # an unknown image stops here, before any question
     key = fingerprint(repo, a.image, command, model.name)
     memory = remembered(repo)
@@ -156,15 +166,15 @@ def run(argv: Sequence[str]) -> int:
         screen.needs_you()
         return ask_human(question)
 
-    log = Log(data_folder() / "events.db")
+    log = Log(data_folder() / "events.db", secrets)
     try:
         base_branch = box.git_bytes(repo, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
-        outcome = Task(repo, contract, a.image, model, human, log, show=screen.show).run()
+        outcome = Task(repo, contract, a.image, model, human, log, show=screen.show, secrets=secrets).run()
         path = None
         if outcome.receipt:
             from agent import receipt
 
-            path = receipt.save(outcome.receipt, data_folder() / "receipts" / outcome.branch.split("/")[-1])
+            path = receipt.save(outcome.receipt, data_folder() / "receipts" / outcome.branch.split("/")[-1], secrets)
     finally:
         log.close()
     screen.result(outcome, path, base_branch)

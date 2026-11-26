@@ -387,6 +387,8 @@ class Box:
             ["tar", "-x", "--no-same-owner", "-C", "/work"], image=self.helper,
             feed=lambda out: _write_tar(repo, entries, out),
         )
+        if r.status == "CANCELLED":
+            raise KeyboardInterrupt
         if r.status != "EXITED" or r.code:
             raise BoxError(f"copying the files failed: {r.status} {r.output[-300:]}")
 

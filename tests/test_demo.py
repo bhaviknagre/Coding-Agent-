@@ -38,6 +38,21 @@ class Demo(unittest.TestCase):
         for verdict in ("VERIFIED", "FAILED", "UNVERIFIABLE"):
             self.assertIn(f">{verdict}</td>", page)
 
+    def test_model_test_marks_the_result(self):
+        from agent.model import FakeModel
+
+        out = io.StringIO()
+        good = FakeModel(list(demo.SCRIPT))
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}), contextlib.redirect_stdout(out), \
+                mock.patch("agent.screen.choose_model", return_value=(good, ())):
+            self.assertEqual(demo.model_test(["gemini"]), 0)
+        self.assertIn("fake is TESTED", out.getvalue())
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}), contextlib.redirect_stdout(out), \
+                mock.patch("agent.screen.choose_model", return_value=(FakeModel([]), ())):
+            self.assertEqual(demo.model_test(["gemini"]), 1)
+        self.assertIn("EXPERIMENTAL", out.getvalue())
+        self.assertIn('"status": "EXPERIMENTAL"', next(self.home.rglob("models.json")).read_text())
+
     def test_report_is_escaped(self):
         page = demo.page([("<script>x</script>", "VERIFIED", "a\x1b[2J & <b>")], 1)
         self.assertNotIn("<script>x", page)

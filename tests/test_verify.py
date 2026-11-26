@@ -233,6 +233,7 @@ class Command(Case):
     def run_agent(self, *args, answer=None, early="", cwd=None):
         """Run the program as a person would: in a terminal, when there is an answer."""
         env = {**os.environ, "HOME": str(self.home), "XDG_DATA_HOME": str(self.home / "data"), "PYTHONPATH": str(ROOT)}
+        env["CODING_AGENT_KEYCHAIN"] = "/nonexistent/test.keychain"
         env["DOCKER_HOST"] = box.docker("context", "inspect", "-f", "{{.Endpoints.docker.Host}}")
         command = [sys.executable, "-m", "agent", *args]
         if answer is None:

@@ -7,6 +7,7 @@
 """
 import argparse
 import html
+import json
 import os
 import shlex
 import subprocess
@@ -169,6 +170,36 @@ were used. Every check ran in fresh containers without network. Took {seconds:.0
 <p>Expected: the recorded task and the honest fix are VERIFIED; a weakened test and a broken test FAILED; a forged
 report is UNVERIFIABLE, because tests that must fail were reported as passing. VERIFIED means that the agreed checks
 passed here, not that the code is right in every case.</p>"""
+
+
+def model_test(argv: Sequence[str]) -> int:
+    """agent model-test gemini: the demo task with a real model. TESTED if it is VERIFIED, else EXPERIMENTAL."""
+    from agent.screen import choose_model
+
+    if len(argv) != 1:
+        print("usage: agent model-test gemini[:MODEL]")
+        return 2
+    model, secrets = choose_model(argv[0])
+    print(f"Testing {visible(model.name)} on the made-up shop project. Only made-up code is sent. About 1-3 minutes.")
+    with tempfile.TemporaryDirectory() as d:
+        repo = project(Path(d))
+        log = Log(data_folder() / "events.db", secrets)
+        try:
+            o = Task(repo, CONTRACT, box.HELPER_IMAGE, model, lambda q: NO, log, secrets=secrets,
+                     show=lambda s: print(f"     doing now: {visible(s)}", flush=True)).run()
+        finally:
+            log.close()
+    status = "TESTED" if o.state == "VERIFIED" else "EXPERIMENTAL"
+    saved = data_folder() / "models.json"
+    try:
+        known = json.loads(saved.read_text())
+    except (OSError, ValueError):
+        known = {}
+    known[model.name] = {"status": status, "result": o.state, "at": time.strftime("%Y-%m-%d %H:%M")}
+    saved.write_text(json.dumps(known, indent=1))
+    print(f"Result: {o.state}" + (f" ({visible(o.reason)})" if o.reason else ""))
+    print(f"{model.name} is {status}." + ("" if status == "TESTED" else " It may still work; results need care."))
+    return 0 if status == "TESTED" else 1
 
 
 if __name__ == "__main__":
