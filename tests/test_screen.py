@@ -117,7 +117,9 @@ class Run(unittest.TestCase):
                             "--image", "no-such:1"), "No such image")):
             code, text, asked = self.agent(*args)
             self.assertIn(words, text, args)
-            self.assertEqual((asked, "Traceback" in text), (0, False), text)
+            # Elsewhere than macOS the key is typed in each session, so that one question is allowed there.
+            allowed = 1 if args == ("x",) and sys.platform != "darwin" else 0
+            self.assertEqual((asked <= allowed, "Traceback" in text), (True, False), text)
 
     def test_warnings_on_the_screen(self):
         (self.repo / "calc.py").write_text("my unfinished work")
