@@ -18,7 +18,7 @@ class Services(unittest.TestCase):
         self.addCleanup(p.stop)
         self.keys = {}
         for name, fake in (("load", lambda s, keychain="": self.keys.get(s, "")),
-                           ("ask", lambda s: (_ for _ in ()).throw(EOFError()))):
+                           ("ask", lambda s: "")):  # Linux asks for the key: nothing typed here
             m = mock.patch(f"agent.key.{name}", fake)
             m.start()
             self.addCleanup(m.stop)
