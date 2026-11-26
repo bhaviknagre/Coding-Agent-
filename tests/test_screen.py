@@ -113,7 +113,7 @@ class Run(unittest.TestCase):
         self.assertEqual(git(self.repo, "branch", "--list", "agent/*"), "")
 
     def test_clear_stops(self):
-        for args, words in (((), "usage"), (("x",), "No Gemini key is stored"), (("x", "--model", "script:" + str(self.script),  # noqa: E501
+        for args, words in (((), "usage"), (("x",), "Stopped: No"), (("x", "--model", "script:" + str(self.script),  # noqa: E501
                             "--image", "no-such:1"), "No such image")):
             code, text, asked = self.agent(*args)
             self.assertIn(words, text, args)

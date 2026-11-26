@@ -22,7 +22,16 @@ OTHER = "zzMarker.key-" + "1234567890abcdefxyz"  # a key that no general pattern
 ROOT = Path(__file__).parent.parent
 
 
-@unittest.skipUnless(sys.platform == "darwin", "the Keychain is on macOS only")
+class NotMac(unittest.TestCase):
+    """Elsewhere the key is only asked for in each session: nothing may be stored, and nothing is found."""
+
+    def test_nothing_is_stored_or_found(self):
+        with mock.patch.object(sys, "platform", "linux"):
+            with self.assertRaisesRegex(key.KeyError_, "only built for macOS"):
+                key.store("gemini", FAKE)
+            self.assertEqual((key.load("gemini"), key.exists("gemini"), key.remove("gemini")), ("", False, False))
+
+
 class Keychain(unittest.TestCase):
     """A keychain of its own, so the developer's real key is never read or changed."""
 
@@ -72,6 +81,10 @@ class Keychain(unittest.TestCase):
                                stdin=subprocess.DEVNULL)
             self.assertNotIn(FAKE, p.stdout + p.stderr)
         self.assertIn("terminal", p.stdout)  # the last one: 'set' without a person
+
+
+if sys.platform != "darwin":  # no Keychain here; NotMac covers this system, and no test is left skipped
+    del Keychain
 
 
 class FakeService(http.server.BaseHTTPRequestHandler):
