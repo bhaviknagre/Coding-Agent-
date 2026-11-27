@@ -93,6 +93,7 @@ class Task:
         secrets: tuple[str, ...] = (), cancel: threading.Event | None = None,
         next_request: Callable[[Outcome], str | None] | None = None, say: Callable[[str], None] = lambda text: None,
         branch: str = "", continue_from: str = "", open_question: Callable[[str], Answer] | None = None,
+        history: list[Message] | None = None, note: str = "",
     ) -> None:
         self.open_question = open_question
         self.repo, self.contract, self.image, self.model, self.log = repo, contract, image, model, log
@@ -113,6 +114,14 @@ class Task:
         self.repeats = Repeats()
         self.commit = ""
         self.checker: Checker | None = None
+        self.sent: list[Message] = []  # the last conversation sent to the model, and its reply
+        self.replied: Message = {}
+        # agent --continue: the conversation from our own log. Its replies are ones the model gave, recorded by us.
+        self.history = history or []
+        if self.history:
+            self.given = {json.dumps(m, sort_keys=True) for m in self.history if m.get("role") == "assistant"}
+            self.pending = f"{note}\n\n{contract.what.rpartition('; then: ')[2]}".strip()
+            self.checked_from = continue_from or self.base
 
     def record(self, kind: str, **body: Any) -> None:
         self.logged += len(json.dumps(body, default=str))
@@ -197,6 +206,8 @@ class Task:
             f"Must pass at the end: {', '.join(c.proof) or 'not agreed'}"
         )
         answer: dict[str, Any] = {"system": SYSTEM, "task": mask(task, self.secrets)}
+        if self.history:
+            answer["history"] = self.history
         while True:
             want = worker.ask(answer)
             kind = want.get("want")
@@ -214,6 +225,7 @@ class Task:
                     outcome, feedback = self._check(b, entries, tools)
                     if outcome and self.next_request:
                         self.record("request.ended", state=outcome.state, commit=outcome.commit)
+                        self._save(outcome)
                         more = self.next_request(outcome)
                         if more is None:
                             return outcome
@@ -232,6 +244,19 @@ class Task:
                 answer = {"text": self._nothing(str(want.get("text")))}
             else:
                 raise Stopped("the agent asked for something that does not exist")
+
+    def _save(self, o: Outcome) -> None:
+        """After a verdict: the conversation so far, for agent --continue. Only checked work is ever continued."""
+        if not (o.branch and o.commit and self.replied):
+            return
+        tail = []
+        for c in self.replied.get("tool_calls") or []:  # each call needs its answer, or a provider refuses the list
+            done = c["function"]["name"] == "finish"
+            said = {"status": "OK", "text": f"The independent check said: {o.state}."} if done else \
+                {"status": "UNKNOWN", "text": "this result was not kept; read the files again if needed"}
+            tail.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(said)})
+        self.log.add(self.id, "chat.saved", repo=str(self.repo), branch=o.branch, commit=o.commit, base=self.base,
+                     what=self.contract.what, state=o.state, messages=[*self.sent, self.replied, *tail])
 
     def _again(self, request: str) -> None:
         """A follow-up in the chat: the same conversation and branch, fresh limits, and the requests so far."""
@@ -257,6 +282,7 @@ class Task:
             self.record("model.replied", number=self.calls, tokens=reply.tokens, cut=reply.cut, message=message)
             if not reply.cut:
                 self.given.add(json.dumps(message, sort_keys=True))
+                self.sent, self.replied = safe, message
                 if isinstance(message.get("content"), str) and message["content"].strip():
                     self.say(mask(message["content"], self.secrets))
                 return message

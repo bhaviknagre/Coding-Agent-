@@ -3,6 +3,7 @@ it asks you before anything risky, and an independent check gives a verdict. Fol
 continue on the same branch. Your folder is never changed: you merge when you want.
 """
 import argparse
+import json
 import shlex
 import sys
 from collections.abc import Sequence
@@ -33,6 +34,9 @@ class Chat:
         box.image_id(self.image)  # an unknown image stops here
         self.branch, self.commit, self.quit = "", "", False
         self.typed_proof: tuple[str, ...] = ()  # a /proof typed at this prompt, for the next request only
+        self.go_on = bool(getattr(a, "go_on", False))
+        self.base, self.what, self.note = "HEAD", "", ""  # set by agent --continue
+        self.history: list[dict[str, object]] | None = None
         self.base_branch = box.git_bytes(self.repo, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
 
     # ---- what the person sees
@@ -96,6 +100,7 @@ class Chat:
         if word == "/new":
             print("  A new branch and conversation start with your next request.")
             self.branch = self.commit = ""
+            self.base = "HEAD"
             return True
         if word == "/help":
             print(HELP)
@@ -124,8 +129,37 @@ class Chat:
                 old = gitsafe.discard(self.repo, self.branch)
                 print(f"  Deleted. To bring it back: git branch {self.branch} {old}")
                 self.branch = self.commit = ""
+                self.base = "HEAD"
                 return True
         return False
+
+    # ---- agent --continue
+
+    def resume(self, log: Log) -> None:
+        """The last checked conversation of this repository, if its branch is still where that chat left it."""
+        rows = log.db.execute("select body from event where kind='chat.saved' order by seq desc")  # newest first
+        saved = next((s for (body,) in rows if (s := json.loads(body)).get("repo") == str(self.repo)), None)
+        if saved is None:
+            print("  No earlier chat in this repository: a new one starts.")
+            return
+        branch = str(saved.get("branch", ""))
+        try:
+            now = box.commit_id(self.repo, branch) if branch.startswith("agent/") else ""
+        except box.BoxError:
+            now = ""
+        if now != saved.get("commit"):
+            print(f"  {visible(branch)} is not where the last chat left it (merged, deleted or changed): a new chat"
+                  " starts.")
+            return
+        self.branch, self.commit, self.base = branch, now, str(saved["base"])
+        self.history, self.what = list(saved["messages"]), str(saved["what"])
+        self.note = (f"(This chat goes on from an earlier one. The work is on the branch {branch}; the independent"
+                     f" check said {saved['state']}. Files may differ from what is above: read a file again before"
+                     " changing it.)")
+        print("  Continuing the last chat in this repository. Earlier requests:")
+        for request in self.what.split("; then: "):
+            print(f"    · {visible(request)[:200]}")
+        print(f"    branch {branch} · last check: {visible(saved['state'])}")
 
     # ---- the whole chat
 
@@ -138,6 +172,8 @@ class Chat:
             return 2
         log = Log(data_folder() / "events.db", self.secrets)
         try:
+            if self.go_on:
+                self.resume(log)
             request = self.ask()
             while request is not None:
                 request = self.task(log, request)
@@ -161,9 +197,15 @@ class Chat:
             return more
 
         checked = self.commit
-        t = Task(self.repo, self.contract._replace(what=request), self.image, self.model, self.human, log,
-                 show=self.step, say=self.words, secrets=self.secrets, next_request=next_request,
-                 branch=self.branch, continue_from=checked, open_question=ask_open)
+        contract = self.contract._replace(what=request)
+        if self.history:  # like a follow-up: a /proof typed now, or else a new test that the human approves
+            contract = contract._replace(what=f"{self.what}; then: {request}"[-2000:], proof=self.typed_proof)
+            self.typed_proof = ()
+        t = Task(self.repo, contract, self.image, self.model, self.human, log,
+                 base=self.base, show=self.step, say=self.words, secrets=self.secrets, next_request=next_request,
+                 branch=self.branch, continue_from=checked, open_question=ask_open, history=self.history,
+                 note=self.note)
+        self.history, self.what, self.note = None, "", ""  # used once
         task.append(t)
         try:
             o = t.run()
@@ -186,6 +228,8 @@ def main(argv: Sequence[str]) -> int:
     p.add_argument("--proof", action="append", default=[], help="a test that must pass at the end")
     p.add_argument("--command", default="", help="the full test command (default: found from the project)")
     p.add_argument("--image", default="", help=screen.IMAGE_HELP)
+    p.add_argument("--continue", dest="go_on", action="store_true",
+                   help="go on with the last chat of this repository, on its branch")
     a = p.parse_args(argv)
     if not sys.stdin.isatty():
         raise Stop("The chat needs a terminal. Next: use 'agent run \"REQUEST\"' in scripts.")

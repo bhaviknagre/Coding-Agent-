@@ -21,7 +21,9 @@ def ask(x):
     if not line: sys.exit(0)
     return json.loads(line)
 start = json.loads(sys.stdin.readline())
-messages = [{"role": "system", "content": start["system"]}, {"role": "user", "content": start["task"]}]
+# A continued chat brings its earlier conversation, from the launcher's own log.
+messages = start.get("history") or [{"role": "system", "content": start["system"]},
+                                    {"role": "user", "content": start["task"]}]
 def size(m): return len(m.get("content") or "")
 def shorten():
     # Oldest results first; the system text, the task and the last ten messages always stay.

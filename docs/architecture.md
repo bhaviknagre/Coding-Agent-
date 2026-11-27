@@ -16,6 +16,9 @@
 | Records | `agent/log.py` (SQLite, hash chain), `mask.py`, `scan.py` | trusted |
 | Key | `agent/key.py` (macOS Keychain) | trusted |
 | Dashboard: Grafana and Datasette on 127.0.0.1 | `agent/dashboard.py` | reads a copy of the log only |
+| MCP server: verify and receipts for other agents | `agent/mcp.py` | requests are untrusted; original tests only |
+| Other languages: image, test command, JUnit XML and Go JSON reports | `agent/junit.py` | a report is a claim: random file name, must agree with the exit code |
+| Model services in the OpenAI format | `agent/services.py` | addresses must be https; keys only in the Keychain |
 
 ## One request, step by step
 1. You type a request. The launcher shows the start screen once per chat: image, test command, files, proof, model.

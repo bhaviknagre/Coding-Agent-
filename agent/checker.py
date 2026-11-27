@@ -13,7 +13,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import IO, NamedTuple
 
-from agent import box
+from agent import box, junit
 
 PASS, FAIL, FLAKY, UNCLEAR, NOT_CHECKED = "PASS", "FAIL", "FLAKY", "UNCLEAR", "NOT CHECKED"
 TOTAL_SECONDS = 1800
@@ -35,6 +35,7 @@ PROTECTED = re.compile(
 # Base files that use a test tool, such as helpers with shared checks.
 USES_TEST_TOOL = r"^[[:space:]]*(import|from)[[:space:]]+(unittest|pytest)"
 REPEATS = 3
+NAMED = ("junit", "gojson")  # other languages whose report names each test
 
 
 class Contract(NamedTuple):
@@ -133,6 +134,8 @@ def test_tool(command: tuple[str, ...]) -> tuple[str, str, list[str]]:
             return command[2], command[0], list(command[3:])
     if command and command[0] == "pytest":
         return "pytest", "python", list(command[1:])
+    if k := junit.kind(command):
+        return k, "", list(command)
     return "command", "", []
 
 
@@ -221,8 +224,17 @@ class Checker:
             b.copy_entries(self.repo, entries)
             env = {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONPYCACHEPREFIX": "/tmp/no-cache"}  # noqa: S108
             timeout = min(box.COMMAND_SECONDS, left)
+            nonce = report = ""
             if self.kind == "command":
                 r = b.run(list(command or self.contract.command), timeout=timeout, env=env)
+            elif self.kind in NAMED:
+                # A name chosen now, for this run only: a report that was there before cannot be it.
+                path = f"/work/.agent-report-{secrets.token_hex(16)}.xml"
+                r = b.run([x.replace(junit.REPORT, path) for x in self.contract.command], timeout=timeout,
+                          env={**env, **junit.ENV})
+                if self.kind == "junit" and r.status == "EXITED":
+                    got = b.run(["cat", path], timeout=60)
+                    report = got.output if got.status == "EXITED" and got.code == 0 else ""
             else:
                 nonce = secrets.token_hex(16)
                 want = {"nonce": nonce, "kind": self.kind, "args": self.args, "only": only, "canary": canary,
@@ -236,7 +248,12 @@ class Checker:
             raise KeyboardInterrupt
         if r.status != "EXITED":
             return Run(None, None, f"{r.status}: {r.output[-2000:]}")
-        tests = None if self.kind == "command" else read_report(r.output, nonce, r.code)
+        if self.kind == "junit":
+            tests = junit.read_junit(report, r.code)
+        elif self.kind == "gojson":
+            tests = junit.read_gojson(r.output, r.code)
+        else:
+            tests = None if self.kind == "command" else read_report(r.output, nonce, r.code)
         return Run(r.code, tests, r.output[-2000:])
 
     # ---- tests known by name
@@ -254,7 +271,11 @@ class Checker:
             self.step("tests", UNCLEAR, "no clear test report with the change: " + last_line(unclear[0]))
             return
         reports = [r.tests for r in runs if r.tests is not None]
-        self.canary([{t: o for t, o in x.items() if name in t} for x in reports])
+        if self.kind in NAMED:
+            self.step("canary", NOT_CHECKED, "not possible for this test tool: its report is taken as it is",
+                      required=False)
+        else:
+            self.canary([{t: o for t, o in x.items() if name in t} for x in reports])
         after = [{t: o for t, o in x.items() if name not in t} for x in reports]
         self.counts = {"before": len(before), "after": min(map(len, after))}
         # An "error" may be a whole file that could not be loaded before the change; that entry is no test.
@@ -269,6 +290,9 @@ class Checker:
     def approved_tests(self, before: dict[str, str], after: list[dict[str, str]]) -> tuple[str, ...]:
         """New tests, in test files whose new content the human saw and allowed. Each must still fail without the
         change. Old tests in those files are not proof: they could have been weakened."""
+        if self.kind in NAMED:  # a name does not show its file; test files the human did not approve are not used
+            seen = any(oid and PROTECTED.search(n) for n, oid in self.contract.approved.items())
+            return tuple(sorted(set().union(*after) - set(before))) if seen else ()
         files = {n for n, oid in self.contract.approved.items() if oid and n.endswith(".py") and PROTECTED.search(n)}
         found = set()
         for name in set().union(*after):

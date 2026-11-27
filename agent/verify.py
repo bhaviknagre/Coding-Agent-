@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
 
-from agent import box, gitsafe, image, receipt
+from agent import box, gitsafe, image, junit, receipt
 from agent.approve import ask_human
 from agent.checker import Change, Checker, Contract, changes, test_tool
 from agent.log import Log, _masked
@@ -103,7 +103,7 @@ IMAGE_HELP = "a Docker image on this computer (default: the project's Dockerfile
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agent verify", description="Check a branch in fresh containers.")
     p.add_argument("branch")
-    p.add_argument("--command", default="python -m unittest", help="the full test command")
+    p.add_argument("--command", default=None, help="the full test command (default: found from the project)")
     p.add_argument("--proof", action="append", default=[], help="a test that fails before and passes after; repeatable")
     p.add_argument("--base", default="", help="where the branch started (default: where it left the current branch)")
     p.add_argument("--image", default="", help=IMAGE_HELP)
@@ -111,12 +111,13 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def verify(argv: Sequence[str], repo: Path | None = None) -> int:
+def verify(argv: Sequence[str], repo: Path | None = None, yes: bool = False) -> int:
+    """yes: the caller has asked its person already (MCP); only allowed when no changed test is used."""
     a = parser().parse_args(argv)
     repo = repo or repository()
     start, result = find_base(repo, a.branch, a.base)
     changed = changes(repo, start, result)
-    command = tuple(shlex.split(a.command))
+    command = junit.test_command(repo, start) if a.command is None else tuple(shlex.split(a.command))
     if not command:
         raise Stop("The test command is empty.")
     kind = test_tool(command)[0]
@@ -135,7 +136,7 @@ def verify(argv: Sequence[str], repo: Path | None = None) -> int:
 
     print(f"Branch   {visible(a.branch)}  {start[:12]} -> {result[:12]}")
     print(f"Image    {visible(a.image)}  (no network; your folder is not mounted)")
-    print(f"Command  {visible(a.command)}")
+    print(f"Command  {visible(shlex.join(command))}")
     print(f"Proof    {visible(' '.join(proof) or 'none: the result can then not be VERIFIED')}")
     print("Files    " + "\n         ".join(visible(x.path) for x in changed))
     unused = [x for x in c.restored if x not in {p.path for p in protected}]
@@ -144,7 +145,7 @@ def verify(argv: Sequence[str], repo: Path | None = None) -> int:
     if protected:
         print("\nThese tests or settings are changed. Saying yes means: use the branch's version.\n")
         print(show_protected(repo, start, protected))
-    if not confirm("\nRun these checks?"):
+    if not (yes and not protected) and not confirm("\nRun these checks?"):
         print("Nothing was run.")
         return 2
 

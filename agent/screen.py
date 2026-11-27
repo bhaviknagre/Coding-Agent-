@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent import approve, box, image, key, services
+from agent import approve, box, image, junit, key, services
 from agent.approve import Answer, ask_human
 from agent.checker import Contract, test_tool
 from agent.log import Log
@@ -103,9 +103,7 @@ def start_screen(contract: Contract, image: str, model: Model, same_as_before: b
 
 
 def choose_command(repo: Path) -> tuple[str, ...]:
-    names = {e.name for e in box.list_commit(repo, "HEAD")[0]}
-    uses_pytest = bool({"pytest.ini", "conftest.py"} & names) or any(n.endswith("/conftest.py") for n in names)
-    return ("python", "-m", "pytest") if uses_pytest else ("python", "-m", "unittest")
+    return junit.test_command(repo)
 
 
 def choose_model(name: str) -> tuple[Model, tuple[str, ...]]:

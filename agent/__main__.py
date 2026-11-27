@@ -3,6 +3,7 @@ import sys
 
 USAGE = """usage: agent [COMMAND]
   (nothing)         open the chat in this repository, like Claude Code
+  --continue        go on with the last chat of this repository
   doctor            check what is needed
   demo [--keep]     see it work on a made-up project, without a key (about 1 minute)
   key set SERVICE   store a key in the macOS Keychain (typed, not shown); agent key list: all services
@@ -11,7 +12,8 @@ USAGE = """usage: agent [COMMAND]
   verify BRANCH     check a branch in fresh containers (no key needed)
   merge BRANCH      show how to merge; only you merge
   discard BRANCH    delete an agent branch, after asking
-  dashboard         see what the agent did, in Grafana and Datasette (on this computer only)"""
+  dashboard         see what the agent did, in Grafana and Datasette (on this computer only)
+  mcp               offer verify to Claude Code, Cursor or Copilot as an MCP tool"""
 
 
 def main() -> int:  # this file must stay readable for old Python versions
@@ -20,7 +22,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         return 2
     import sqlite3
 
-    from agent import box, chat, dashboard, demo, doctor, gitsafe, key, mask, screen, verify
+    from agent import box, chat, dashboard, demo, doctor, gitsafe, key, mask, mcp, screen, verify
 
     commands = {
         "": chat.main,
@@ -31,6 +33,7 @@ def main() -> int:  # this file must stay readable for old Python versions
         "merge": verify.merge,
         "discard": verify.discard,
         "dashboard": dashboard.main,
+        "mcp": mcp.main,
     }
     name, rest = (sys.argv[1:2] or [""])[0], sys.argv[2:]
     if name == "doctor" and not rest:

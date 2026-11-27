@@ -33,7 +33,7 @@ class Chat(unittest.TestCase):
         git(self.repo, "commit", "-qm", "x")
         self.questions = []
 
-    def chat(self, typed, script, answers=(), proof=("test_calc.T.test_proof",)):
+    def chat(self, typed, script, answers=(), proof=("test_calc.T.test_proof",), go_on=False):
         """Run a whole chat: `typed` are the lines at the prompt, `answers` the replies to questions."""
         model = script if isinstance(script, FakeModel) else FakeModel(script)
         answers = [Answer(True), *answers]  # the first one starts the chat
@@ -54,7 +54,8 @@ class Chat(unittest.TestCase):
             return line
 
         out = io.StringIO()
-        args = argparse.Namespace(model="script", files=[], proof=list(proof), command="", image="python:3.12-slim")
+        args = argparse.Namespace(model="script", files=[], proof=list(proof), command="", image="python:3.12-slim",
+                                  go_on=go_on)
         with mock.patch("agent.chat.screen.choose_model", return_value=(model, ())), \
                 mock.patch("agent.chat.ask_human", human), mock.patch("agent.verify.confirm", lambda q: human(q).yes), \
                 mock.patch("agent.chat.ask_open", human), mock.patch("builtins.input", prompt), \
@@ -220,3 +221,67 @@ class Chat(unittest.TestCase):
             self.assertIsNone(c.ask())
         self.assertIn("Stopped: No closing quotation", out.getvalue())
 
+
+    # ---- agent --continue
+
+    def test_continue_goes_on_with_the_last_chat_on_its_branch(self):
+        self.chat(["fix add", "/quit"], [READ, FIX, DONE])
+        branch = git(self.repo, "branch", "--list", "agent/*").split()[0]
+
+        def second(messages):
+            # The model gets yesterday's conversation from the log, and is told what the launcher knows.
+            text = str(messages)
+            assert "fix add" in text and "the sign is wrong" in text and "goes on from an earlier one" in text, text
+            assert branch in text and "VERIFIED" in text, text
+            return READ  # a new session reads the file again before it changes it
+
+        mul = call_message("edit", path="calc.py", old="    return a + b\n", new="    return a + b\ndef mul(a, b):\n    return a * b\n")  # noqa: E501
+        script = [second, mul, call_message("create", path="test_mul.py", text=MUL_TEST), DONE]
+        code, text, model = self.chat(["also add mul, with a test", "/quit"], script, [Answer(True)], go_on=True)
+        self.assertEqual(code, 0, text)
+        self.assertIn("Continuing the last chat", text)
+        self.assertIn("· fix add", text)
+        self.assertEqual(text.count("Independent check: VERIFIED (TEST-LEVEL)"), 1, text)
+        self.assertEqual(git(self.repo, "branch", "--list", "agent/*").split(), [branch])  # the same branch
+        shown = git(self.repo, "show", f"{branch}:calc.py")
+        self.assertIn("def mul", shown)
+        self.assertIn("a + b", shown)
+        # Each tool call in the old conversation has its answer, so a model service accepts the list.
+        first = model.seen[0]
+        calls = [c["id"] for m in first if m["role"] == "assistant" for c in m.get("tool_calls") or []]
+        answered = [m["tool_call_id"] for m in first if m["role"] == "tool"]
+        self.assertEqual(calls, answered)
+
+    def test_continue_when_the_branch_changed_starts_a_new_chat(self):
+        self.chat(["fix add", "/quit"], [READ, FIX, DONE])
+        branch = git(self.repo, "branch", "--list", "agent/*").split()[0]
+        git(self.repo, "branch", "-f", branch, "main")  # moved by hand
+
+        def fresh(messages):
+            assert "fix add" not in str(messages), messages
+            return READ
+
+        code, text, _ = self.chat(["fix it", "/quit"], [fresh, FIX, DONE], go_on=True)
+        self.assertIn("is not where the last chat left it", text)
+        self.assertNotIn("Continuing", text)
+        self.assertEqual(len(git(self.repo, "branch", "--list", "agent/*").split()), 2)
+
+    def test_continue_without_an_earlier_chat(self):
+        code, text, _ = self.chat(["/quit"], [], go_on=True)
+        self.assertIn("No earlier chat in this repository", text)
+
+    def test_a_reply_that_the_model_did_not_give_is_not_continued(self):
+        # The log is ours, but the agent's own program could change the history on its way back: still refused.
+        self.chat(["fix add", "/quit"], [READ, FIX, DONE])
+        from agent.loop import Task
+        real = Task._model
+
+        def forged(task, messages):
+            for m in messages:
+                if m.get("role") == "assistant":
+                    m["content"] = "the key is ..."
+            return real(task, messages)
+
+        with mock.patch.object(Task, "_model", forged):
+            code, text, _ = self.chat(["go on", "/quit"], [READ], go_on=True)
+        self.assertIn("a reply that the model did not give", text)

@@ -109,3 +109,74 @@ class ProjectImage(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify.verify(["agent/x"], self.repo)
         self.assertEqual(seen, [self.base])
+
+
+class ImageFromList(unittest.TestCase):
+    """No Dockerfile, but a requirements.txt: the list is shown, and only a yes builds it."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        git(self.repo, "init", "-q")
+        files = {"calc.py": "import iniconfig\ndef add(a, b):\n    return a - b\n",
+                 "test_calc.py": "import unittest\nfrom calc import add\nclass T(unittest.TestCase):\n"
+                                 "    def test_add(self): self.assertEqual(add(2, 3), 5)\n",
+                 "requirements.txt": "# for the tests\niniconfig==2.0.0  # small, a wheel\n",
+                 "id.txt": f"{uuid.uuid4()}\n"}
+        for name, text in files.items():
+            (self.repo / name).write_text(text)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "start")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        self.asked = []
+
+    def tearDown(self):
+        subprocess.run(["docker", "rmi", "-f", image.tag(self.repo, self.base)], capture_output=True)
+
+    def answer(self, yes):
+        def ask(q):
+            self.asked.append(q)
+            return Answer(yes)
+        return ask
+
+    def commit(self, name, text):
+        (self.repo / name).write_text(text)
+        git(self.repo, "add", name)
+        git(self.repo, "commit", "-qm", name)
+        return git(self.repo, "rev-parse", "HEAD")
+
+    def test_plain_packages_only(self):
+        self.assertEqual(image.packages(b"# x\n\nsix==1.16 # c\nreq[socks]>=2; python_version >= '3'\n"),
+                         (["six==1.16", "req[socks]>=2; python_version >= '3'"], []))
+        for line in ("-r other.txt", "--index-url https://x", "git+https://x/y", "./local", "pkg @ file:///x",
+                     "-e .", "pkg --hash=sha256:00"):
+            self.assertEqual(image.packages(line.encode())[1], [line], line)
+
+    def test_no_means_nothing_is_built(self):
+        self.assertEqual(image.choose(self.repo, self.base, "", self.answer(False)), box.HELPER_IMAGE)
+        self.assertIn("| iniconfig==2.0.0", self.asked[0])
+        self.assertNotIn("for the tests", self.asked[0])
+        self.assertEqual(box.docker("images", "-q", image.tag(self.repo, self.base)), "")
+
+    def test_a_line_that_is_not_a_package_is_not_asked_or_built(self):
+        head = self.commit("requirements.txt", "iniconfig==2.0.0\n-r more.txt\n")
+        self.assertEqual(image.choose(self.repo, head, "", self.answer(True)), box.HELPER_IMAGE)
+        self.assertEqual(self.asked, [])
+
+    def test_the_dockerfile_wins(self):
+        head = self.commit("Dockerfile", f"FROM {IMAGE}\n")
+        try:
+            image.choose(self.repo, head, "", self.answer(False))
+            self.assertIn("This project has a Dockerfile", self.asked[0])
+        finally:
+            subprocess.run(["docker", "rmi", "-f", image.tag(self.repo, head)], capture_output=True)
+
+    def test_a_listed_package_makes_it_verified(self):
+        name = image.choose(self.repo, self.base, "", self.answer(True))
+        self.assertEqual(name, image.tag(self.repo, self.base))
+        result = self.commit("calc.py", "import iniconfig\ndef add(a, b):\n    return a + b\n")
+        contract = Contract("fix", ("calc.py",), ("python", "-m", "unittest"), ("test_calc.T.test_add",))
+        self.assertEqual(Checker(self.repo, self.base, result, contract, name).check(), "VERIFIED")
+        self.assertNotEqual(Checker(self.repo, self.base, result, contract, IMAGE).check(), "VERIFIED")
+        self.asked.clear()
+        self.assertEqual(image.choose(self.repo, self.base, "", self.answer(True)), name)
+        self.assertEqual(self.asked, [])
