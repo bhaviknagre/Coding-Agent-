@@ -1,0 +1,59 @@
+site_name: Coding Agent that proves its work
+site_description: Handover, operations and interview notes for the coding agent with an independent checker
+site_url: https://bhaviknagre.github.io/Coding-Agent-/
+repo_url: https://github.com/bhaviknagre/Coding-Agent-
+repo_name: bhaviknagre/Coding-Agent-
+edit_uri: edit/main/docs/
+docs_dir: docs
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: {icon: material/weather-sunny, name: Light mode}
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Home: index.md
+  - Overview:
+      - Parts at a glance: architecture.md
+      - Threat model: threat-model.md
+  - Engineering:
+      - 01 System architecture: 01-system-architecture.md
+      - 02 Core logic and data models: 02-core-logic-and-data-models.md
+      - 03 Permissions and state safety: 03-permissions-and-state-safety.md
+      - 04 Security and compliance: 04-security-and-compliance.md
+      - 05 FinOps and resource routing: 05-finops-and-resource-routing.md
+      - 06 Testing and CI: 06-testing-and-ci-regression.md
+  - Running it:
+      - 07 Operations and runbooks: 07-operations-and-runbooks.md
+      - 08 Product and handover: 08-product-and-handover.md
+  - Interviews:
+      - 09 Interview and YC prep: 09-interview-and-yc-prep.md
